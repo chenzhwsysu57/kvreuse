@@ -1,0 +1,166 @@
+{
+  "revisions": {
+    "argkp": "2f5e2d5ad5a387fe731da2f00b423ce1d845c5d2",
+    "helpsteer2": "990b2711a36180dd19d9c94b8627844866f8982a",
+    "deal_or_no_deal": "bbb93bbf00f69fced75d5c0d22e855bda07c9b78",
+    "pku_safe_rlhf": "9421ffafec3fa40a1f1a7d567b4d525079477ecb",
+    "harmbench_contextual": "8e1604d1171fe8a48d8febecd22f600e462bdcdd"
+  },
+  "hf_endpoint": "https://hf-mirror.com",
+  "files": [
+    {
+      "dataset": "argkp",
+      "path": "data/raw/argkp/arguments_train.csv",
+      "url": "https://raw.githubusercontent.com/IBM/KPA_2021_shared_task/2f5e2d5ad5a387fe731da2f00b423ce1d845c5d2/kpm_data/arguments_train.csv",
+      "bytes": 897005,
+      "sha256": "aa7eaa6b399bdc1b2b679e23185591c5bd59264234b1cba87a3c1df534db6235"
+    },
+    {
+      "dataset": "argkp",
+      "path": "data/raw/argkp/key_points_train.csv",
+      "url": "https://raw.githubusercontent.com/IBM/KPA_2021_shared_task/2f5e2d5ad5a387fe731da2f00b423ce1d845c5d2/kpm_data/key_points_train.csv",
+      "bytes": 20546,
+      "sha256": "dc9625378749b8e0f85ba9d5babec7823fa4d8c6a9da5906b42f3401c7feaf60"
+    },
+    {
+      "dataset": "argkp",
+      "path": "data/raw/argkp/labels_train.csv",
+      "url": "https://raw.githubusercontent.com/IBM/KPA_2021_shared_task/2f5e2d5ad5a387fe731da2f00b423ce1d845c5d2/kpm_data/labels_train.csv",
+      "bytes": 411470,
+      "sha256": "e6d866cdd426f63e143e4e9aea1d33d5c3eb9f06777fc29508cf54e1810319ab"
+    },
+    {
+      "dataset": "argkp",
+      "path": "data/raw/argkp/arguments_dev.csv",
+      "url": "https://raw.githubusercontent.com/IBM/KPA_2021_shared_task/2f5e2d5ad5a387fe731da2f00b423ce1d845c5d2/kpm_data/arguments_dev.csv",
+      "bytes": 153477,
+      "sha256": "e06b763c41606c3290ddfa414109b3d3d47331ddd322ff5e4dfa0079ec9afb1c"
+    },
+    {
+      "dataset": "argkp",
+      "path": "data/raw/argkp/key_points_dev.csv",
+      "url": "https://raw.githubusercontent.com/IBM/KPA_2021_shared_task/2f5e2d5ad5a387fe731da2f00b423ce1d845c5d2/kpm_data/key_points_dev.csv",
+      "bytes": 3370,
+      "sha256": "328beb1551afa445518ff97c6e6706249e470571dcdc81b72713e5c05a6ff73c"
+    },
+    {
+      "dataset": "argkp",
+      "path": "data/raw/argkp/labels_dev.csv",
+      "url": "https://raw.githubusercontent.com/IBM/KPA_2021_shared_task/2f5e2d5ad5a387fe731da2f00b423ce1d845c5d2/kpm_data/labels_dev.csv",
+      "bytes": 65467,
+      "sha256": "d321711a07ca449bd1fe438fcfc55bfa478d2fdf7e8b74bd7a7394f17aff7fc4"
+    },
+    {
+      "dataset": "argkp",
+      "path": "data/raw/argkp/README.md",
+      "url": "https://raw.githubusercontent.com/IBM/KPA_2021_shared_task/2f5e2d5ad5a387fe731da2f00b423ce1d845c5d2/README.md",
+      "bytes": 13067,
+      "sha256": "da548a96bded71b13a9a513f85682114ae1c2590da23102a44294baf6a088402"
+    },
+    {
+      "dataset": "helpsteer2",
+      "path": "data/raw/helpsteer2/train.jsonl.gz",
+      "url": "https://hf-mirror.com/datasets/nvidia/HelpSteer2/resolve/990b2711a36180dd19d9c94b8627844866f8982a/train.jsonl.gz?download=true",
+      "bytes": 11315813,
+      "sha256": "c0d7e91d738d42e8a08070db26c4c09a9c7631308e1f0fd380ff43d130c9f713"
+    },
+    {
+      "dataset": "helpsteer2",
+      "path": "data/raw/helpsteer2/validation.jsonl.gz",
+      "url": "https://hf-mirror.com/datasets/nvidia/HelpSteer2/resolve/990b2711a36180dd19d9c94b8627844866f8982a/validation.jsonl.gz?download=true",
+      "bytes": 581833,
+      "sha256": "610eeb5289494d613c4c0f70aade2df8df0b499f3a24e76d232f74e6909d010a"
+    },
+    {
+      "dataset": "helpsteer2",
+      "path": "data/raw/helpsteer2/README.md",
+      "url": "https://hf-mirror.com/datasets/nvidia/HelpSteer2/resolve/990b2711a36180dd19d9c94b8627844866f8982a/README.md?download=true",
+      "bytes": 24960,
+      "sha256": "835effb9e7d9cd0e8b7b8c1816d1d97a8961a036543108e4a0b6a5e22712ff7b"
+    },
+    {
+      "dataset": "helpsteer2",
+      "path": "data/raw/helpsteer2/disagreements/disagreements.jsonl.gz",
+      "url": "https://hf-mirror.com/datasets/nvidia/HelpSteer2/resolve/990b2711a36180dd19d9c94b8627844866f8982a/disagreements/disagreements.jsonl.gz?download=true",
+      "bytes": 13368757,
+      "sha256": "53435e0e2926620bf08ce91f278d7368ee6903f416a47764fe8839f3b71b3ab4"
+    },
+    {
+      "dataset": "deal_or_no_deal",
+      "path": "data/raw/deal_or_no_deal/train.txt",
+      "url": "https://raw.githubusercontent.com/facebookresearch/end-to-end-negotiator/bbb93bbf00f69fced75d5c0d22e855bda07c9b78/src/data/negotiate/train.txt",
+      "bytes": 4325861,
+      "sha256": "aa278f06765463a5767055e1a544d922b39a9bb78f586f85513bf99f74aa2300"
+    },
+    {
+      "dataset": "deal_or_no_deal",
+      "path": "data/raw/deal_or_no_deal/val.txt",
+      "url": "https://raw.githubusercontent.com/facebookresearch/end-to-end-negotiator/bbb93bbf00f69fced75d5c0d22e855bda07c9b78/src/data/negotiate/val.txt",
+      "bytes": 468508,
+      "sha256": "5ad7df00b8bc4b1fff565cb4dc38b23afc7874c496b0ed2e1c58c232326ff996"
+    },
+    {
+      "dataset": "deal_or_no_deal",
+      "path": "data/raw/deal_or_no_deal/test.txt",
+      "url": "https://raw.githubusercontent.com/facebookresearch/end-to-end-negotiator/bbb93bbf00f69fced75d5c0d22e855bda07c9b78/src/data/negotiate/test.txt",
+      "bytes": 444703,
+      "sha256": "37be3150bf656195b61a7547b45cf307acce929f2a8140036890a561c3597c83"
+    },
+    {
+      "dataset": "deal_or_no_deal",
+      "path": "data/raw/deal_or_no_deal/LICENSE",
+      "url": "https://raw.githubusercontent.com/facebookresearch/end-to-end-negotiator/bbb93bbf00f69fced75d5c0d22e855bda07c9b78/LICENSE",
+      "bytes": 19342,
+      "sha256": "3fbaa451ae2ab9a8d2e1c18666d8f9f00c277ba424cc826046ab0b211ce5d3b2"
+    },
+    {
+      "dataset": "pku_safe_rlhf",
+      "path": "data/raw/pku_safe_rlhf/Alpaca-7B/test.jsonl",
+      "url": "https://hf-mirror.com/datasets/PKU-Alignment/PKU-SafeRLHF/resolve/9421ffafec3fa40a1f1a7d567b4d525079477ecb/data/Alpaca-7B/test.jsonl?download=true",
+      "bytes": 8599619,
+      "sha256": "fcfd18c5cd24f304a07a773f7f11c38b89ae9f8dee76e0324d740a0f34a6dd34"
+    },
+    {
+      "dataset": "pku_safe_rlhf",
+      "path": "data/raw/pku_safe_rlhf/Alpaca2-7B/test.jsonl",
+      "url": "https://hf-mirror.com/datasets/PKU-Alignment/PKU-SafeRLHF/resolve/9421ffafec3fa40a1f1a7d567b4d525079477ecb/data/Alpaca2-7B/test.jsonl?download=true",
+      "bytes": 8085575,
+      "sha256": "391849230d41e9d0760ed7f236c7eabd6fb9332c00b9a1b301202fa8fa9d651a"
+    },
+    {
+      "dataset": "pku_safe_rlhf",
+      "path": "data/raw/pku_safe_rlhf/Alpaca3-8B/test.jsonl",
+      "url": "https://hf-mirror.com/datasets/PKU-Alignment/PKU-SafeRLHF/resolve/9421ffafec3fa40a1f1a7d567b4d525079477ecb/data/Alpaca3-8B/test.jsonl?download=true",
+      "bytes": 6634022,
+      "sha256": "7f7ee8812fbeb52e1568a2b91d1d90bf6d0064b88ba8362198a7234d30007781"
+    },
+    {
+      "dataset": "pku_safe_rlhf",
+      "path": "data/raw/pku_safe_rlhf/README.md",
+      "url": "https://hf-mirror.com/datasets/PKU-Alignment/PKU-SafeRLHF/resolve/9421ffafec3fa40a1f1a7d567b4d525079477ecb/README.md?download=true",
+      "bytes": 9058,
+      "sha256": "77ce394a7406b94e7ebe04b63e25850733286369db2d038936a6114502923579"
+    },
+    {
+      "dataset": "harmbench_contextual",
+      "path": "data/raw/harmbench_contextual/harmbench_behaviors_text_test.csv",
+      "url": "https://raw.githubusercontent.com/centerforaisafety/HarmBench/8e1604d1171fe8a48d8febecd22f600e462bdcdd/data/behavior_datasets/harmbench_behaviors_text_test.csv",
+      "bytes": 160828,
+      "sha256": "75d257b3e7428c52eb7b0154318f455af3e01b09a3794b5e2f3d36054f3c0e29"
+    },
+    {
+      "dataset": "harmbench_contextual",
+      "path": "data/raw/harmbench_contextual/README.md",
+      "url": "https://raw.githubusercontent.com/centerforaisafety/HarmBench/8e1604d1171fe8a48d8febecd22f600e462bdcdd/README.md",
+      "bytes": 10480,
+      "sha256": "baae4a0b64b61812e61a162eafb2ed344edbc151f57dd99c4af063e3d0efec5d"
+    },
+    {
+      "dataset": "harmbench_contextual",
+      "path": "data/raw/harmbench_contextual/LICENSE",
+      "url": "https://raw.githubusercontent.com/centerforaisafety/HarmBench/8e1604d1171fe8a48d8febecd22f600e462bdcdd/LICENSE",
+      "bytes": 1074,
+      "sha256": "fe29c68dd1216e81e98a6069165e1c720757b23bbcaa6c0cb8f9a957bdaaca80"
+    }
+  ]
+}

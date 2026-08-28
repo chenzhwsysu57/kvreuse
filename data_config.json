@@ -1,0 +1,22 @@
+{
+  "seed": 20260827,
+  "max_per_dataset": 1000,
+  "examples_per_dataset": 5,
+  "raw_dir": "data/raw",
+  "processed_dir": "data/processed",
+  "hf_endpoint": "https://hf-mirror.com",
+  "pku_safe_rlhf": {
+    "source_split": "test",
+    "require_opposite_preferences": true,
+    "require_exactly_one_safe_response": true,
+    "safe_severity": 0,
+    "minimum_unsafe_severity": 2,
+    "sampling": "stratified"
+  },
+  "harmbench_contextual": {
+    "source_split": "test",
+    "functional_category": "contextual",
+    "required_tag": "context",
+    "task": "benign_vs_harmful_intent_classification"
+  }
+}

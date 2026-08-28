@@ -1,0 +1,31 @@
+{
+  "seed": 20260827,
+  "max_per_dataset": 1000,
+  "datasets": {
+    "argkp": {
+      "valid_before_sampling": 110,
+      "written": 110,
+      "sampling": "deterministic_random"
+    },
+    "helpsteer2": {
+      "valid_before_sampling": 649,
+      "written": 649,
+      "sampling": "deterministic_random"
+    },
+    "deal_or_no_deal": {
+      "valid_before_sampling": 2284,
+      "written": 1000,
+      "sampling": "deterministic_random"
+    },
+    "pku_safe_rlhf": {
+      "valid_before_sampling": 133,
+      "written": 133,
+      "sampling": "stratified"
+    },
+    "harmbench_contextual": {
+      "valid_before_sampling": 81,
+      "written": 81,
+      "sampling": "deterministic_random"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+# Python and editor artifacts
+__pycache__/
+*.py[cod]
+*.swp
+.vscode/
+.agents/
+.codex
+
+# Historical experiments and generated evaluation results
+legacy/
+results/
+
+# Downloaded datasets are reproducible from the pinned manifest.
+data/raw/**
+!data/raw/manifest.json
+
+# Keep compact audit examples and construction statistics, not full outputs.
+data/processed/**
+!data/processed/examples/
+!data/processed/examples/*.jsonl
+!data/processed/stats.json
+
+# Model-validation subsets belong to the next development milestone.
+data/validation/
