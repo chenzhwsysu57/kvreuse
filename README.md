@@ -44,3 +44,40 @@ This first milestone covers only pinned dataset downloads, deterministic constru
 schema validation, and compact human-audit examples. Model inference, full-recompute
 dataset validation, and KV-cache reuse evaluation are intentionally deferred to later
 milestones so they can be reviewed and committed separately.
+
+## Direct-reuse development runner
+
+The uncommitted next-milestone runner evaluates each selected record atomically as
+`full_A`, `full_B`, `A->B`, and `B->A`:
+
+```bash
+conda run -n kvreuse python scripts/run_direct_reuse.py \
+  --model 0.6b \
+  --input data/validation/second_step_10_each_harmbench.jsonl \
+  --max-samples 10 \
+  --output-root results/direct_reuse
+```
+
+Add `--run-self-controls` after a model, Transformers, attention backend, or cache
+implementation change. It additionally runs `A->A` and `B->B` through the identical
+extraction, relocation, splice, suffix, and generation path as cross-prefix reuse.
+Once those controls pass, formal runs omit them to avoid duplicating `full_A/full_B`.
+Post-RoPE cached Keys are inverse-rotated at their source absolute positions and
+rotated into the target positions through Qwen3's own rotary embedding; Values are
+copied without rotation. The runner rejects non-default RoPE configurations and any
+record whose token-aligned shared block differs between A and B.
+
+Every completed sample is appended immediately to `samples.jsonl`. Its artifact
+directory contains compressed token-by-layer cosine matrices and a two-row Key/Value
+heatmap whose x-axis is decoder layer and y-axis is shared-block token. Self-control
+runs produce four rows instead. The NPZ also
+retains uncorrected-Key cosine so RoPE relocation can be audited directly. `summary.json`
+is refreshed after every sample with overall and per-dataset full-vs-reuse accuracy
+loss, prediction agreement, first-token KL, latency, and KV similarity.
+
+Reuse latency includes target-prefix prefill, RoPE relocation/cache splice, suffix
+prefill, and greedy generation. It excludes creation of the donor shared-block cache,
+which is treated as already resident. BF16/SDPA segmented prefill is not bitwise equal
+to a monolithic full prefill, so self controls require identical generated token IDs,
+first-token KL at most `0.01`, and logit cosine at least `0.999`; maximum absolute logit
+difference remains recorded as a diagnostic rather than a pass criterion.

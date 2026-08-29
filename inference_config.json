@@ -1,0 +1,24 @@
+{
+  "system_message": "You're a helpful assistant.",
+  "models": {
+    "0.6b": "Qwen/Qwen3-0.6B",
+    "1.7b": "Qwen/Qwen3-1.7B",
+    "4b": "Qwen/Qwen3-4B",
+    "8b": "Qwen/Qwen3-8B"
+  },
+  "condition": "full_recompute",
+  "datasets": [
+    "argkp",
+    "deal_or_no_deal",
+    "helpsteer2",
+    "pku_safe_rlhf",
+    "harmbench_contextual"
+  ],
+  "examples_per_dataset": 10,
+  "helpsteer2_label_mode": "consensus_opposite_endpoints_0_or_4",
+  "selection_seed": 20260827,
+  "enable_thinking": false,
+  "reasoning_policy": "Reasoning is enabled only by explicit instructions in the user prompt and remains visible output.",
+  "do_sample": false,
+  "max_new_tokens": 512
+}
