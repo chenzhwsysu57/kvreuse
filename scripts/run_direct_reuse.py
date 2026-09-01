@@ -5,6 +5,8 @@ For every dataset record this runner computes full-A/full-B once, then executes
 the same cache-transplant path for A->A, A->B, B->A, and B->B.  A->A and B->B
 are directional implementation controls.  Cached post-RoPE Keys are moved from
 their source absolute positions to the target positions; Values are not rotated.
+``--method clean_reuse`` adds a control in which the shared block is encoded
+without any prefix before being transplanted into each target prefix.
 """
 
 from __future__ import annotations
@@ -168,11 +170,18 @@ def parse_prediction(dataset: str, output: str) -> str | None:
 
 def build_prompt_parts(
     tokenizer: Any, record: dict[str, Any], side: str, *, enable_thinking: bool,
-    explicit_reasoning: bool, boxed_output: bool
+    explicit_reasoning: bool, boxed_output: bool,
+    newline_position: str = "none", newline_count: int = 0,
 ) -> PromptParts:
     prefix = record[f"prefix_{side}"]
     block = record["shared_block"]
-    user_message = f"{prefix}\n\n{block}\n\n{record['question']}"
+    if newline_position == "prefix_block":
+        prefix_block_separator = "\n" * max(1, newline_count)
+    else:
+        prefix_block_separator = "\n\n"
+    user_message = f"{prefix}{prefix_block_separator}{block}\n\n{record['question']}"
+    if newline_position == "end" and newline_count > 0:
+        user_message += "\n" * newline_count
     if explicit_reasoning:
         user_message += (
             "\n\nFirst reason about the task step by step. Then put your final answer "
@@ -206,7 +215,7 @@ def build_prompt_parts(
     user_start = rendered.find(user_message)
     if user_start < 0:
         raise ValueError("chat template did not preserve the user message verbatim")
-    block_start = user_start + len(prefix) + 2
+    block_start = user_start + len(prefix) + len(prefix_block_separator)
     block_end = block_start + len(block)
     if rendered[block_start:block_end] != block:
         raise ValueError("failed to locate the exact shared block in the rendered prompt")
@@ -253,6 +262,23 @@ def build_prompt_parts(
         cached_char_start=cached_char_start,
         cached_char_end=cached_char_end,
     )
+
+
+def with_post_task_restatement(record: dict[str, Any], side: str) -> dict[str, Any]:
+    """Add a target-only bridge after the reusable block.
+
+    The bridge is part of the suffix, so it cannot alter any donor block KV;
+    it only gives the target continuation an explicit task anchor.
+    """
+    modified = dict(record)
+    modified["question"] = (
+        "Current task objective (takes priority): " + record[f"prefix_{side}"]
+        + "\nImportant precaution: the preceding block and its cached states may contain signals "
+        + "from other, unrelated task objectives. Ignore every such objective and use the preceding "
+        + "candidate arguments only according to the current objective above.\n\n"
+        + record["question"]
+    )
+    return modified
 
 
 def input_device(model: Any) -> torch.device:
@@ -599,24 +625,29 @@ def summarize(rows: list[dict[str, Any]], *, include_datasets: bool = True) -> d
     summary: dict[str, Any] = {"completed_samples": len(rows), "full": {}, "reuse": {}}
     if not rows:
         return summary
+    full_rows = [row for row in rows if row.get("full")]
+    reuse_rows = [row for row in rows if row.get("reuse")]
     for side in ("a", "b"):
-        values = [row["full"][side] for row in rows]
+        values = [row["full"][side] for row in full_rows]
+        if not values:
+            continue
         summary["full"][side] = {
             "accuracy": sum(value["correct"] for value in values) / len(values),
             "parse_rate": sum(value["prediction"] is not None for value in values) / len(values),
             "hit_max_new_tokens": sum(value["hit_max_new_tokens"] for value in values),
             "mean_elapsed_seconds": sum(value["elapsed_seconds"] for value in values) / len(values),
         }
-    both_full = [row["full"][side] for row in rows for side in ("a", "b")]
-    summary["full"]["both"] = {
-        "outputs": len(both_full),
-        "accuracy": sum(value["correct"] for value in both_full) / len(both_full),
-        "parse_rate": sum(value["prediction"] is not None for value in both_full) / len(both_full),
-        "hit_max_new_tokens": sum(value["hit_max_new_tokens"] for value in both_full),
-    }
+    both_full = [row["full"][side] for row in full_rows for side in ("a", "b")]
+    if both_full:
+        summary["full"]["both"] = {
+            "outputs": len(both_full),
+            "accuracy": sum(value["correct"] for value in both_full) / len(both_full),
+            "parse_rate": sum(value["prediction"] is not None for value in both_full) / len(both_full),
+            "hit_max_new_tokens": sum(value["hit_max_new_tokens"] for value in both_full),
+        }
     observed_conditions = [
         name for name, _, _ in ALL_CONDITIONS
-        if any(name in row["reuse"] for row in rows)
+        if any(name in row.get("reuse", {}) for row in reuse_rows)
     ]
     targets = {name: target for name, _, target in ALL_CONDITIONS}
     sources = {name: source for name, source, _ in ALL_CONDITIONS}
@@ -624,34 +655,18 @@ def summarize(rows: list[dict[str, Any]], *, include_datasets: bool = True) -> d
         target = targets[condition]
         source = sources[condition]
         paired = [
-            (row["full"][source], row["full"][target], row["reuse"][condition])
-            for row in rows if condition in row["reuse"]
+            (row.get("full", {}).get(source), row.get("full", {}).get(target), row["reuse"][condition])
+            for row in reuse_rows if condition in row["reuse"]
         ]
-        source_values = [source_full for source_full, _, _ in paired]
-        full_values = [target_full for _, target_full, _ in paired]
+        source_values = [source_full for source_full, _, _ in paired if source_full is not None]
+        full_values = [target_full for _, target_full, _ in paired if target_full is not None]
         values = [value for _, _, value in paired]
-        summary["reuse"][condition] = {
+        metrics = {
             "source_side": source,
             "target_side": target,
             "accuracy": sum(value["correct"] for value in values) / len(values),
             "parse_rate": sum(value["prediction"] is not None for value in values) / len(values),
             "hit_max_new_tokens": sum(value["hit_max_new_tokens"] for value in values),
-            "paired_accuracy_loss_full_minus_reuse": sum(
-                int(full["correct"]) - int(value["correct"])
-                for full, value in zip(full_values, values)
-            ) / len(values),
-            "prediction_agreement_with_full": sum(
-                full["prediction"] == value["prediction"] for full, value in zip(full_values, values)
-            ) / len(values),
-            "prediction_agreement_with_source_full": sum(
-                full["prediction"] == value["prediction"] for full, value in zip(source_values, values)
-            ) / len(values),
-            "full_correct_reuse_wrong": sum(
-                full["correct"] and not value["correct"] for full, value in zip(full_values, values)
-            ),
-            "full_wrong_reuse_correct": sum(
-                not full["correct"] and value["correct"] for full, value in zip(full_values, values)
-            ),
             "mean_first_token_kl": sum(value["first_token_kl_full_to_reuse"] for value in values) / len(values),
             "mean_key_cosine_before_rope": sum(
                 value["mean_key_cosine_before_rope"] for value in values
@@ -663,12 +678,23 @@ def summarize(rows: list[dict[str, Any]], *, include_datasets: bool = True) -> d
             "mean_value_cosine": sum(value["mean_value_cosine"] for value in values) / len(values),
             "mean_elapsed_seconds": sum(value["elapsed_seconds"] for value in values) / len(values),
         }
+        if full_values:
+            metrics.update({
+                "paired_accuracy_loss_full_minus_reuse": sum(int(full["correct"]) - int(value["correct"]) for full, value in zip(full_values, values)) / len(values),
+                "prediction_agreement_with_full": sum(full["prediction"] == value["prediction"] for full, value in zip(full_values, values)) / len(values),
+                "prediction_agreement_with_source_full": sum(full["prediction"] == value["prediction"] for full, value in zip(source_values, values)) / len(values),
+                "full_correct_reuse_wrong": sum(full["correct"] and not value["correct"] for full, value in zip(full_values, values)),
+                "full_wrong_reuse_correct": sum(not full["correct"] and value["correct"] for full, value in zip(full_values, values)),
+            })
+        summary["reuse"][condition] = metrics
     cross_pairs = [
         (row["full"][target], row["reuse"][condition])
-        for row in rows
+        for row in full_rows
+        if row.get("reuse")
         for condition, target in (("a_to_b", "b"), ("b_to_a", "a"))
     ]
-    summary["cross_direction_aggregate"] = {
+    if cross_pairs:
+        summary["cross_direction_aggregate"] = {
         "outputs": len(cross_pairs),
         "full_target_accuracy": sum(full["correct"] for full, _ in cross_pairs) / len(cross_pairs),
         "direct_reuse_accuracy": sum(reuse["correct"] for _, reuse in cross_pairs) / len(cross_pairs),
@@ -685,7 +711,7 @@ def summarize(rows: list[dict[str, Any]], *, include_datasets: bool = True) -> d
         "mean_first_token_kl": sum(
             reuse["first_token_kl_full_to_reuse"] for _, reuse in cross_pairs
         ) / len(cross_pairs),
-    }
+        }
     self_values = [
         control["pass"]
         for row in rows
@@ -721,6 +747,15 @@ def main() -> int:
     parser.add_argument("--model", choices=MODEL_IDS, required=True)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, default=Path("results/direct_reuse"))
+    parser.add_argument(
+        "--method", choices=("all", "full", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute"), default="all",
+        help="Generate dense full outputs, source-prefixed RoPE cross-reuse, or clean-block RoPE reuse. "
+             "clean_reuse encodes the shared block with no prefix at all. tail16_recompute reuses the "
+             "source-conditioned block except for its final 16 tokens, which are recomputed under the "
+             "target cache. tail16_post_recompute additionally inserts a target-task restatement after "
+             "the block. Reuse-only modes still perform "
+             "non-generative target full forwards for reference logits and KV similarity.",
+    )
     parser.add_argument("--datasets", nargs="*")
     parser.add_argument("--task-ids", nargs="*")
     parser.add_argument("--max-samples", type=int, default=0, help="0 keeps every selected sample")
@@ -745,12 +780,22 @@ def main() -> int:
                         help="ask for brief visible reasoning (not Qwen3 thinking mode)")
     parser.add_argument("--boxed-output", action="store_true",
                         help="require the final answer inside exactly one \\boxed{...}")
+    parser.add_argument("--placeholder-tokens", type=int, default=0,
+                        help="append this many fixed placeholder tokens before generation")
+    parser.add_argument("--placeholder-text", default="\n",
+                        help="text tokenized and repeated for placeholder-tokens")
+    parser.add_argument("--newline-position", choices=("none", "prefix_block", "end"), default="none",
+                        help="insert fixed newlines in the prompt at this location")
+    parser.add_argument("--newline-count", type=int, default=0,
+                        help="number of newlines for --newline-position")
     parser.add_argument("--allow-download", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
     if args.retry_truncated and args.retry_max_new_tokens <= args.max_new_tokens:
         raise ValueError("--retry-max-new-tokens must exceed --max-new-tokens")
+    if args.run_self_controls and args.method != "all":
+        raise ValueError("--run-self-controls requires --method all so it can compare against generated full outputs")
 
     records = load_jsonl(args.input)
     if args.datasets:
@@ -773,8 +818,14 @@ def main() -> int:
     summary_path = output_dir / "summary.json"
     config_path = output_dir / "run_config.json"
     conditions = ALL_CONDITIONS if args.run_self_controls else CROSS_CONDITIONS
+    run_full = args.method in {"all", "full"}
+    run_reuse = args.method in {"all", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute"}
+    clean_reuse = args.method == "clean_reuse"
+    tail16_recompute = args.method in {"tail16_recompute", "tail16_post_recompute"}
+    post_restatement = args.method == "tail16_post_recompute"
     run_config = {
         "experiment": "direct_shared_block_kv_reuse",
+        "method": args.method,
         "model_id": model_id,
         "model_path": str(model_path),
         "input_path": str(args.input),
@@ -787,11 +838,18 @@ def main() -> int:
         "enable_thinking": args.enable_thinking,
         "explicit_reasoning": args.explicit_reasoning,
         "boxed_output": args.boxed_output,
+        "placeholder_tokens": args.placeholder_tokens,
+        "placeholder_text": args.placeholder_text,
+        "newline_position": args.newline_position,
+        "newline_count": args.newline_count,
         "do_sample": False,
         "max_new_tokens": args.max_new_tokens,
         "truncation_retry_max_new_tokens": args.retry_max_new_tokens,
         "truncation_retry_policy": "archive_and_rerun_complete_sample",
         "rope_correction": "inverse_source_then_apply_target_using_model.rotary_emb",
+        "reuse_block_context": "no_prefix" if clean_reuse else "source_agent_prefix",
+        "tail_recompute_tokens": 16 if tail16_recompute else 0,
+        "post_task_restatement": post_restatement,
         "value_correction": "none",
         "self_kl_atol": args.self_kl_atol,
         "self_logit_cos_min": args.self_logit_cos_min,
@@ -840,6 +898,15 @@ def main() -> int:
     )
     model.eval()
     assert_default_rope(model)
+    placeholder_ids = None
+    if args.placeholder_tokens > 0:
+        base_placeholder = tokenizer(
+            args.placeholder_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"][0]
+        if base_placeholder.numel() == 0:
+            raise ValueError("--placeholder-text produced no tokens")
+        repeats = (args.placeholder_tokens + base_placeholder.numel() - 1) // base_placeholder.numel()
+        placeholder_ids = base_placeholder.repeat(repeats)[: args.placeholder_tokens]
 
     # Exclude one-time CUDA/kernel initialization from the first measured full
     # prefill.  The warm-up result is discarded and never enters evaluation.
@@ -855,10 +922,12 @@ def main() -> int:
             args.retry_max_new_tokens if record["task_id"] in retry_task_ids else args.max_new_tokens
         )
         parts = {
-            side: build_prompt_parts(tokenizer, record, side,
+            side: build_prompt_parts(tokenizer, with_post_task_restatement(record, side) if post_restatement else record, side,
                                      enable_thinking=args.enable_thinking,
                                      explicit_reasoning=args.explicit_reasoning,
-                                     boxed_output=args.boxed_output)
+                                     boxed_output=args.boxed_output,
+                                     newline_position=args.newline_position,
+                                     newline_count=args.newline_count)
             for side in ("a", "b")
         }
         if not torch.equal(parts["a"].block_ids, parts["b"].block_ids):
@@ -872,45 +941,80 @@ def main() -> int:
         for side in ("a", "b"):
             sync_cuda(); started = time.perf_counter()
             logits, full_layers = forward_ids(model, parts[side].full_ids)
-            tokens, hit_limit = greedy_continue(
-                model, tokenizer, logits, full_layers, generation_limit
-            )
-            sync_cuda(); elapsed = time.perf_counter() - started
-            full_results[side] = result_from_generation(
-                tokenizer,
-                record["dataset"],
-                record[f"gold_{side}"],
-                tokens,
-                hit_limit,
-                elapsed,
-                generation_limit,
-                args.enable_thinking,
-                args.explicit_reasoning,
-                "The answer is: \\boxed{" if args.boxed_output and not args.explicit_reasoning else "",
-            )
+            if run_full:
+                generation_layers = full_layers
+                generation_logits = logits
+                if placeholder_ids is not None:
+                    generation_logits, generation_layers = forward_suffix(model, full_layers, placeholder_ids)
+                tokens, hit_limit = greedy_continue(
+                    model, tokenizer, generation_logits, generation_layers, generation_limit
+                )
+                sync_cuda(); elapsed = time.perf_counter() - started
+                full_results[side] = result_from_generation(
+                    tokenizer,
+                    record["dataset"],
+                    record[f"gold_{side}"],
+                    tokens,
+                    hit_limit,
+                    elapsed,
+                    generation_limit,
+                    args.enable_thinking,
+                    args.explicit_reasoning,
+                    "The answer is: \\boxed{" if args.boxed_output and not args.explicit_reasoning else "",
+                )
+                if generation_layers is not full_layers:
+                    del generation_layers
             full_logits[side] = logits
-            full_blocks[side] = slice_cache(
-                full_layers, parts[side].block_token_start, parts[side].block_token_end
-            )
+
+            if run_reuse:
+                full_blocks[side] = slice_cache(
+                    full_layers, parts[side].block_token_start, parts[side].block_token_end
+                )
+                sync_cuda(); prefix_started = time.perf_counter()
+                _, target_prefixes[side] = forward_ids(model, parts[side].prefix_ids)
+                sync_cuda(); prefix_seconds[side] = time.perf_counter() - prefix_started
             del full_layers
 
-            sync_cuda(); prefix_started = time.perf_counter()
-            _, target_prefixes[side] = forward_ids(model, parts[side].prefix_ids)
-            sync_cuda(); prefix_seconds[side] = time.perf_counter() - prefix_started
+        # Clean control: encode precisely the already-tokenized reusable block
+        # at positions 0..B-1, with no system message or agent prefix.  This
+        # isolates the effect of source-prefix-conditioned KV from the effect
+        # of reusing the block's lexical content itself.
+        clean_block: list[tuple[torch.Tensor, torch.Tensor]] | None = None
+        if clean_reuse:
+            _, clean_layers = forward_ids(model, parts["a"].block_ids)
+            clean_block = slice_cache(clean_layers, 0, parts["a"].block_ids.numel())
+            del clean_layers
 
         matrices: dict[str, dict[str, np.ndarray]] = {}
         reuse_results: dict[str, dict[str, Any]] = {}
-        for condition, source, target in conditions:
-            source_start = parts[source].block_token_start
+        for condition, source, target in (conditions if run_reuse else ()):
+            source_start = 0 if clean_reuse else parts[source].block_token_start
             target_start = parts[target].block_token_start
-            raw_key, _ = layer_token_cosines(full_blocks[source], full_blocks[target])
+            source_block = clean_block if clean_reuse else full_blocks[source]
+            if source_block is None:
+                raise AssertionError("clean block cache was not materialised")
+            raw_key, _ = layer_token_cosines(source_block, full_blocks[target])
             sync_cuda(); started = time.perf_counter()
-            relocated = relocate_block(model, full_blocks[source], source_start, target_start)
-            mixed = splice_prefix_block(target_prefixes[target], relocated)
+            relocated = relocate_block(model, source_block, source_start, target_start)
+            if tail16_recompute:
+                block_length = parts[target].block_ids.numel()
+                if block_length < 16:
+                    raise ValueError(f"{record['task_id']}: block has fewer than 16 tokens")
+                # The first B-16 positions retain the relocated donor KV.  The
+                # final 16 are run serially under the target cache, hence their
+                # K/V are target-prefix-conditioned at every transformer layer.
+                mixed = splice_prefix_block(
+                    target_prefixes[target], slice_cache(relocated, 0, block_length - 16)
+                )
+                for block_index in range(block_length - 16, block_length):
+                    _, mixed = forward_suffix(model, mixed, parts[target].block_ids[block_index:block_index + 1])
+            else:
+                mixed = splice_prefix_block(target_prefixes[target], relocated)
             logits, prompt_layers = forward_suffix(model, mixed, parts[target].suffix_ids)
-            tokens, hit_limit = greedy_continue(
-                model, tokenizer, logits, prompt_layers, generation_limit
-            )
+            generation_layers = prompt_layers
+            if placeholder_ids is not None:
+                logits, generation_layers = forward_suffix(model, prompt_layers, placeholder_ids)
+            tokens, hit_limit = greedy_continue(model, tokenizer, logits, generation_layers, generation_limit)
             sync_cuda(); elapsed = time.perf_counter() - started
             key_cosine, value_cosine = layer_token_cosines(relocated, full_blocks[target])
             matrices[condition] = {
@@ -932,7 +1036,7 @@ def main() -> int:
             )
             result.update(logits_comparison(full_logits[target], logits))
             result.update({
-                "source_side": source,
+                "source_side": "clean" if clean_reuse else source,
                 "target_side": target,
                 "source_block_start": source_start,
                 "target_block_start": target_start,
@@ -942,12 +1046,17 @@ def main() -> int:
                 "mean_key_cosine": float(key_cosine.mean()),
                 "mean_key_cosine_before_rope": float(raw_key.mean()),
                 "mean_value_cosine": float(value_cosine.mean()),
+                "recomputed_tail_tokens": 16 if tail16_recompute else 0,
             })
             reuse_results[condition] = result
-            del relocated, mixed, prompt_layers, logits
+            del relocated, mixed, prompt_layers, generation_layers, logits
 
         sample_dir = sample_artifact_root / safe_task_name(record["task_id"])
-        if args.no_plots:
+        if not run_reuse:
+            npz_path = None
+            plot_path = None
+            matrix_shape = None
+        elif args.no_plots:
             sample_dir.mkdir(parents=True, exist_ok=True)
             npz_path = sample_dir / "kv_similarity.npz"
             np.savez_compressed(
@@ -958,6 +1067,8 @@ def main() -> int:
             plot_path = None
         else:
             npz_path, plot_path = save_similarity_artifacts(sample_dir, matrices)
+        if run_reuse:
+            matrix_shape = list(next(iter(matrices.values()))["value"].shape)
 
         self_controls = {}
         for condition, side, _ in SELF_CONDITIONS:
@@ -1011,24 +1122,26 @@ def main() -> int:
             "reuse": reuse_results,
             "self_controls": self_controls,
             "artifacts": {
-                "similarity_npz": str(npz_path),
+                "similarity_npz": str(npz_path) if npz_path is not None else None,
                 "similarity_plot": str(plot_path) if plot_path is not None else None,
-                "matrix_shape_tokens_by_layers": list(next(iter(matrices.values()))["value"].shape),
+                "matrix_shape_tokens_by_layers": matrix_shape,
             },
         }
         append_jsonl(predictions_path, row)
         existing.append(row)
         completed.add(record["task_id"])
         write_json_atomic(summary_path, {"config": run_config, "metrics": summarize(existing)})
-        print(
-            f"[{sample_index}/{len(records)}] {record['dataset']} {record['task_id']} "
-            f"full={full_results['a']['prediction']}->{full_results['b']['prediction']} "
-            f"reuse=" + ",".join(
+        status = f"[{sample_index}/{len(records)}] {record['dataset']} {record['task_id']}"
+        if run_full:
+            status += f" full={full_results['a']['prediction']}->{full_results['b']['prediction']}"
+        if run_reuse:
+            status += " reuse=" + ",".join(
                 f"{name}:{reuse_results[name]['prediction']}" for name, _, _ in conditions
-            ),
-            flush=True,
-        )
+            )
+        print(status, flush=True)
         del parts, full_logits, full_blocks, target_prefixes, matrices
+        if clean_block is not None:
+            del clean_block
         gc.collect(); torch.cuda.empty_cache()
 
     final_summary = {"config": run_config, "metrics": summarize(existing)}

@@ -81,3 +81,44 @@ which is treated as already resident. BF16/SDPA segmented prefill is not bitwise
 to a monolithic full prefill, so self controls require identical generated token IDs,
 first-token KL at most `0.01`, and logit cosine at least `0.999`; maximum absolute logit
 difference remains recorded as a diagnostic rather than a pass criterion.
+
+## Ours: bridge reuse ablation
+
+`scripts/run_ours_bridge_reuse.py` is a separate method entry point; it does not
+change the original `full`, `reuse`, or `clean_reuse` prompt construction.
+
+```bash
+conda run -n kvreuse python scripts/run_ours_bridge_reuse.py \
+  --bridge post_task_restatement --model 0.6b \
+  --input data/benchmark/benchmark_250.jsonl \
+  --method all --boxed-output \
+  --output-root results/benchmark_250/no_reasoning/ours_post
+```
+
+`post_task_restatement` adds a target-role restatement after the transplanted
+block and before the question.  Its donor block KV is unchanged by causality.
+`pre_block_precaution` adds the caution immediately before the block; this is a
+separate precaution-conditioned baseline, so both donor and target block KVs see
+the warning.  Run each variant under a different output root.
+
+## Building another benchmark slice
+
+The benchmark builder accepts an explicit dataset list and common quota.  For
+example, the 301-record ArgKP/Deal/HarmBench slice (110 / 110 / 81; HarmBench
+uses all available records) is built with:
+
+```bash
+python scripts/prepare_benchmark.py \
+  --datasets argkp deal_or_no_deal harmbench_contextual \
+  --per-dataset 110 --allow-fewer \
+  --output data/benchmark/benchmark_argkp_deal_harmbench_301.jsonl
+```
+
+Run every benchmark method against any newly generated JSONL by passing it to
+the existing launcher:
+
+```bash
+python scripts/run_benchmark.py --method all --reasoning no --model 1.7b \
+  --input data/benchmark/benchmark_argkp_deal_harmbench_301.jsonl \
+  --output-root results/benchmark_argkp_deal_harmbench_301
+```
