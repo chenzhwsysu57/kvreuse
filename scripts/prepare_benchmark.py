@@ -26,6 +26,12 @@ DEFAULT_QUOTAS = {
     "helpsteer2": 50,
     "pku_safe_rlhf": 50,
 }
+PRESET_QUOTAS = {
+    "helpsteer2_pku_safe_rlhf_266": {
+        "helpsteer2": 133,
+        "pku_safe_rlhf": 133,
+    },
+}
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -39,8 +45,12 @@ def sha256(path: Path) -> str:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=ROOT / "data/processed/all.jsonl")
-    parser.add_argument("--output", type=Path, default=ROOT / "data/benchmark/benchmark_250.jsonl")
+    parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--seed", type=int, default=20260831)
+    parser.add_argument(
+        "--preset", choices=tuple(PRESET_QUOTAS),
+        help="named benchmark configuration; cannot be combined with selection options",
+    )
     parser.add_argument(
         "--quotas-json", type=str,
         help="JSON mapping of dataset name to selected-record count. Overrides --datasets/--per-dataset.",
@@ -63,7 +73,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if args.quotas_json is not None:
+    if args.preset is not None:
+        if args.quotas_json is not None or args.datasets or args.per_dataset is not None or args.allow_fewer:
+            raise ValueError("--preset cannot be combined with other dataset-selection options")
+        quotas = dict(PRESET_QUOTAS[args.preset])
+        if args.output is None:
+            args.output = ROOT / "data/benchmark" / f"benchmark_{args.preset}.jsonl"
+    elif args.quotas_json is not None:
         if args.datasets or args.per_dataset is not None or args.allow_fewer:
             raise ValueError("--quotas-json cannot be combined with --datasets, --per-dataset, or --allow-fewer")
         quotas = json.loads(args.quotas_json)
@@ -77,6 +93,8 @@ def main() -> int:
         if args.per_dataset is not None or args.allow_fewer:
             raise ValueError("--per-dataset and --allow-fewer require --datasets")
         quotas = dict(DEFAULT_QUOTAS)
+    if args.output is None:
+        args.output = ROOT / "data/benchmark/benchmark_250.jsonl"
     if not isinstance(quotas, dict) or not all(isinstance(value, int) and value > 0 for value in quotas.values()):
         raise ValueError("--quotas-json must map datasets to positive integer counts")
     if args.output.exists() and not args.overwrite:

@@ -308,3 +308,23 @@ For a custom input or a single method, use `scripts/run_benchmark.py` directly.
 The suite runner accepts `--model-size {1.7b,4b,8b}` and `--reasoning {on,off}`,
 resumes completed sample files by default, and writes a method-by-dataset table under
 `analysis/outputs/` after all methods finish.
+
+### HelpSteer2 + PKU-SafeRLHF evaluation
+
+`data/benchmark/benchmark_helpsteer2_pku_safe_rlhf_266.jsonl` contains a deterministic
+balanced evaluation set: 133 HelpSteer2 records and 133 PKU-SafeRLHF records. Its
+manifest records the source checksum, seed, counts, and selected task IDs. Run the
+following command to rebuild the dataset from `data/processed/all.jsonl`:
+
+```bash
+python scripts/prepare_benchmark.py --preset helpsteer2_pku_safe_rlhf_266 --overwrite
+```
+
+Run the default Full baseline with:
+
+```bash
+bash scripts/run_helpsteer2_pku_safe_rlhf_266.sh --model-size 4b --reasoning off
+```
+
+The runner also accepts `--method` (for example `reuse` or `all`), `--limit` for a
+smoke test, and `--output-root`; model sizes are `0.6b`, `1.7b`, `4b`, and `8b`.
