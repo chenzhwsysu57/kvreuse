@@ -305,9 +305,11 @@ bash scripts/run_benchmark_301.sh --model-size 4b --reasoning off
 ```
 
 For a custom input or a single method, use `scripts/run_benchmark.py` directly.
-The suite runner accepts `--model-size {1.7b,4b,8b}` and `--reasoning {on,off}`,
-resumes completed sample files by default, and writes a method-by-dataset table under
-`analysis/outputs/` after all methods finish.
+The suite runner accepts `--model-size {1.7b,4b,8b}`, `--reasoning {on,off}`, and
+an optional `--method` selector. It accepts either a comma-separated list
+(`--method full,reuse`) or repeated flags (`--method full --method reuse`); omitting it
+keeps the full suite. It resumes completed sample files by default and writes a
+method-by-dataset table under `analysis/outputs/` after all selected methods finish.
 
 ### HelpSteer2 + PKU-SafeRLHF evaluation
 
