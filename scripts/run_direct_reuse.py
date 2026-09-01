@@ -996,17 +996,20 @@ def main() -> int:
             raw_key, _ = layer_token_cosines(source_block, full_blocks[target])
             sync_cuda(); started = time.perf_counter()
             relocated = relocate_block(model, source_block, source_start, target_start)
+            recomputed_tail_tokens = 0
             if tail16_recompute:
                 block_length = parts[target].block_ids.numel()
-                if block_length < 16:
-                    raise ValueError(f"{record['task_id']}: block has fewer than 16 tokens")
-                # The first B-16 positions retain the relocated donor KV.  The
-                # final 16 are run serially under the target cache, hence their
-                # K/V are target-prefix-conditioned at every transformer layer.
+                # Short shared blocks occur in HelpSteer2.  Recompute the whole
+                # block in that case rather than aborting the benchmark; for
+                # longer blocks this preserves the usual final-16-token policy.
+                recomputed_tail_tokens = min(16, block_length)
+                donor_length = block_length - recomputed_tail_tokens
+                # The donor prefix retains the relocated KV, while the final
+                # min(16, B) tokens are run serially under the target cache.
                 mixed = splice_prefix_block(
-                    target_prefixes[target], slice_cache(relocated, 0, block_length - 16)
+                    target_prefixes[target], slice_cache(relocated, 0, donor_length)
                 )
-                for block_index in range(block_length - 16, block_length):
+                for block_index in range(donor_length, block_length):
                     _, mixed = forward_suffix(model, mixed, parts[target].block_ids[block_index:block_index + 1])
             else:
                 mixed = splice_prefix_block(target_prefixes[target], relocated)
@@ -1046,7 +1049,7 @@ def main() -> int:
                 "mean_key_cosine": float(key_cosine.mean()),
                 "mean_key_cosine_before_rope": float(raw_key.mean()),
                 "mean_value_cosine": float(value_cosine.mean()),
-                "recomputed_tail_tokens": 16 if tail16_recompute else 0,
+                "recomputed_tail_tokens": recomputed_tail_tokens,
             })
             reuse_results[condition] = result
             del relocated, mixed, prompt_layers, generation_layers, logits
