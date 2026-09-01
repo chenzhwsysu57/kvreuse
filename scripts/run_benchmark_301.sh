@@ -4,11 +4,15 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 --model-size {1.7b|4b|8b} --reasoning {on|off}" >&2
+  echo "Usage: $0 --model-size {1.7b|4b|8b} --reasoning {on|off} [--input PATH] [--output-root PATH] [--relay-python PATH]" >&2
 }
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODEL_SIZE=""
 REASONING=""
+INPUT=""
+OUTPUT_ROOT=""
+RELAY_PYTHON="${RELAY_PYTHON:-}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model-size)
@@ -17,6 +21,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --reasoning)
       REASONING="${2:-}"
+      shift 2
+      ;;
+    --input)
+      INPUT="${2:-}"
+      shift 2
+      ;;
+    --output-root)
+      OUTPUT_ROOT="${2:-}"
+      shift 2
+      ;;
+    --relay-python)
+      RELAY_PYTHON="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -34,10 +50,9 @@ done
 case "$MODEL_SIZE" in 1.7b|4b|8b) ;; *) usage; exit 2 ;; esac
 case "$REASONING" in on|off) ;; *) usage; exit 2 ;; esac
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-INPUT="$ROOT/data/benchmark/benchmark_argkp_deal_harmbench_301.jsonl"
-OUTPUT_ROOT="$ROOT/results/benchmark_argkp_deal_harmbench_301"
-PYTHON_BIN="${KVREUSE_PYTHON:-/home/czw/miniconda3/envs/kvreuse/bin/python}"
+INPUT="${INPUT:-$ROOT/data/benchmark/benchmark_argkp_deal_harmbench_301.jsonl}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-$ROOT/results/benchmark_argkp_deal_harmbench_301}"
+PYTHON_BIN="${KVREUSE_PYTHON:-python}"
 if [[ "$REASONING" == "on" ]]; then
   REASONING_ARG="yes"
   MODE_DIR="reasoning"
@@ -60,13 +75,18 @@ METHODS=(
 )
 
 cd "$ROOT"
+BENCHMARK_EXTRA=(--kvreuse-python "$PYTHON_BIN")
+if [[ -n "$RELAY_PYTHON" ]]; then
+  BENCHMARK_EXTRA+=(--relay-python "$RELAY_PYTHON")
+fi
 for method in "${METHODS[@]}"; do
   "$PYTHON_BIN" -u scripts/run_benchmark.py \
     --method "$method" \
     --reasoning "$REASONING_ARG" \
     --model "$MODEL_SIZE" \
     --input "$INPUT" \
-    --output-root "$OUTPUT_ROOT"
+    --output-root "$OUTPUT_ROOT" \
+    "${BENCHMARK_EXTRA[@]}"
 done
 
 "$PYTHON_BIN" -u analysis/summarize_benchmark_methods.py \

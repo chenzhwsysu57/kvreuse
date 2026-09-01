@@ -16,6 +16,134 @@ Raw downloads are cached under `data/raw/`. Every file's URL, pinned source revi
 
 Use `--max-per-dataset 0` to retain all valid examples. Sampling is deterministic for a fixed seed. `data_config.json` documents the default experiment values; command-line flags are authoritative.
 
+## Environments
+
+The dataset-only pipeline above needs no third-party Python packages. Model inference
+and analysis use a CUDA-capable GPU and two isolated environments: `kvreuse` for this
+repository's Qwen3 runners, and `relaycaching` for the external baselines. Do not
+install the RelayCaching requirements into `kvreuse`. Choose either the Conda or the
+venv recipe below; both create the same two environments.
+
+### Conda installation
+
+```bash
+# Main project: direct reuse, Tail-16, bridge, KVCOMM, and analysis.
+conda create -y -n kvreuse python=3.10
+conda run -n kvreuse python -m pip install --upgrade pip
+
+# Install a CUDA-enabled PyTorch wheel appropriate for your NVIDIA driver first.
+# See https://pytorch.org/get-started/locally/ for the exact command.
+conda run -n kvreuse python -m pip install torch transformers modelscope numpy matplotlib
+
+# External methods: RelayCaching, CacheBlend, and EPIC.
+git clone https://github.com/YingshengGeng/RelayCaching.git third_party/RelayCaching
+git -C third_party/RelayCaching checkout 6b0e9d37b74d89cfb0fbad276790150a0d9c0b49
+conda create -y -n relaycaching python=3.12
+conda run -n relaycaching python -m pip install --upgrade pip
+conda run -n relaycaching python -m pip install -r third_party/RelayCaching/requirements.txt
+```
+
+### venv installation
+
+```bash
+# Main project environment.
+python3.10 -m venv .venv_kvreuse
+. .venv_kvreuse/bin/activate
+python -m pip install --upgrade pip
+# Install a CUDA-enabled PyTorch wheel appropriate for your NVIDIA driver first.
+python -m pip install torch transformers modelscope numpy matplotlib
+deactivate
+
+# External-baseline environment (the upstream project uses Python 3.12).
+git clone https://github.com/YingshengGeng/RelayCaching.git third_party/RelayCaching
+git -C third_party/RelayCaching checkout 6b0e9d37b74d89cfb0fbad276790150a0d9c0b49
+python3.12 -m venv .venv_relaycaching
+. .venv_relaycaching/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r third_party/RelayCaching/requirements.txt
+deactivate
+```
+
+Verify that the main environment sees CUDA before inference:
+
+```bash
+conda run -n kvreuse python -c \
+  "import torch, transformers, modelscope; print(torch.__version__, torch.cuda.is_available(), transformers.__version__, modelscope.__version__)"
+```
+
+The development environment used for the reported runs was Python 3.10.20, PyTorch
+2.13.0+cu130, Transformers 5.15.0, ModelScope 1.39.1, NumPy 2.2.6, and Matplotlib
+3.10.9. `torch.cuda.is_available()` must print `True` before running inference.
+
+### Downloading models to a non-home filesystem
+
+All Qwen3 runners honor `MODELSCOPE_CACHE`. Set it to a directory with enough space
+before downloading and keep the same variable exported while running benchmarks. For
+example, to store checkpoints under `/data` rather than `~/.cache/modelscope`:
+
+```bash
+export MODELSCOPE_CACHE=/data/$USER/modelscope
+mkdir -p "$MODELSCOPE_CACHE"
+
+# Download only the sizes needed for an experiment; run on a network-enabled node.
+conda run -n kvreuse python scripts/download_models.py \
+  --cache-dir "$MODELSCOPE_CACHE" --models 1.7b 4b 8b
+
+# Confirm the resolved cache locations and that no checkpoint shard is missing.
+conda run -n kvreuse python scripts/download_models.py \
+  --cache-dir "$MODELSCOPE_CACHE" --models 4b
+```
+
+ModelScope stores Qwen3-4B at
+`$MODELSCOPE_CACHE/models/Qwen--Qwen3-4B/snapshots/<revision>`. The direct runners,
+KVCOMM, and the RelayCaching/CacheBlend/EPIC adapter all use this environment variable.
+For a detached shell or tmux job, export it in the command itself:
+
+```bash
+tmux new-session -d -s kvreuse_4b \
+  'cd /path/to/kvreuse && MODELSCOPE_CACHE=/data/$USER/modelscope \
+   bash scripts/run_benchmark_301.sh --model-size 4b --reasoning off'
+```
+
+### Clean-machine `/data` layout (venv example)
+
+After cloning this repository and following the venv installation recipe, the source
+checkout, environments, datasets, models, and outputs may all live outside `$HOME`.
+The following end-to-end sequence uses `/data/$USER/kvreuse` for every large artifact:
+
+```bash
+git clone <this-repository-url> /data/$USER/kvreuse/source
+cd /data/$USER/kvreuse/source
+
+# Create .venv_kvreuse and .venv_relaycaching here using the venv recipe above.
+export DATA_ROOT=/data/$USER/kvreuse/data
+export MODELSCOPE_CACHE=/data/$USER/kvreuse/modelscope
+export RESULT_ROOT=/data/$USER/kvreuse/results/benchmark_301
+mkdir -p "$DATA_ROOT" "$MODELSCOPE_CACHE" "$RESULT_ROOT"
+
+# Download and construct data entirely under /data.
+. .venv_kvreuse/bin/activate
+python scripts/download_datasets.py --output-dir "$DATA_ROOT/raw"
+python scripts/build_datasets.py --raw-dir "$DATA_ROOT/raw" --output-dir "$DATA_ROOT/processed" \
+  --seed 20260827 --max-per-dataset 1000
+python scripts/validate_datasets.py "$DATA_ROOT/processed/all.jsonl"
+python scripts/prepare_benchmark.py --input "$DATA_ROOT/processed/all.jsonl" \
+  --datasets argkp deal_or_no_deal harmbench_contextual --per-dataset 110 --allow-fewer \
+  --output "$DATA_ROOT/benchmark/benchmark_argkp_deal_harmbench_301.jsonl"
+
+# Download the desired checkpoint into /data, then run the suite.
+python scripts/download_models.py --cache-dir "$MODELSCOPE_CACHE" --models 8b
+bash scripts/run_benchmark_301.sh --model-size 8b --reasoning off \
+  --input "$DATA_ROOT/benchmark/benchmark_argkp_deal_harmbench_301.jsonl" \
+  --output-root "$RESULT_ROOT" \
+  --relay-python "$PWD/.venv_relaycaching/bin/python"
+```
+
+The suite script uses the active `python` by default. If it is not activated, set
+`KVREUSE_PYTHON=/data/$USER/kvreuse/source/.venv_kvreuse/bin/python` before invoking
+the script. `--input` and `--output-root` make the benchmark independent of the
+repository's `data/` and `results/` directories.
+
 ## Construction and filtering
 
 All records contain `task_id`, `dataset`, `prefix_a`, `prefix_b`, `shared_block`, `question`, `gold_a`, `gold_b`, and `metric`. Additional `metadata` preserves source IDs and construction facts for auditing. The validator rejects empty required fields and every record for which `gold_a == gold_b`.
@@ -38,12 +166,13 @@ These filters establish a machine-checkable change in the correct output. They d
 
 Respect the licenses and dataset cards copied into each raw dataset directory.
 
-## Current scope
+## Scope
 
-This first milestone covers only pinned dataset downloads, deterministic construction,
-schema validation, and compact human-audit examples. Model inference, full-recompute
-dataset validation, and KV-cache reuse evaluation are intentionally deferred to later
-milestones so they can be reviewed and committed separately.
+In addition to dataset construction, this repository now contains Qwen3 full-prefill,
+direct KV reuse, clean-block reuse, Tail-16 recomputation, target-task bridge ablations,
+KVCOMM-style calibration, and adapters for the RelayCaching, CacheBlend, and EPIC
+baselines. Experiment outputs are deliberately kept under `results/` and are not source
+files; benchmark definitions and runners are versioned.
 
 ## Direct-reuse development runner
 
@@ -101,6 +230,59 @@ block and before the question.  Its donor block KV is unchanged by causality.
 separate precaution-conditioned baseline, so both donor and target block KVs see
 the warning.  Run each variant under a different output root.
 
+## External baseline: RelayCaching, CacheBlend, and EPIC
+
+The three external baselines are run through `scripts/run_relay_methods.py`, which
+adapts this repository's static shared-block task into the official RelayCaching
+code path. The external repository is intentionally not vendored in Git. Obtain it
+under the expected path and install its requirements in a separate environment:
+
+```bash
+git clone https://github.com/YingshengGeng/RelayCaching.git third_party/RelayCaching
+git -C third_party/RelayCaching checkout 6b0e9d37b74d89cfb0fbad276790150a0d9c0b49
+
+conda create -n relaycaching python=3.12
+conda run -n relaycaching python -m pip install -r third_party/RelayCaching/requirements.txt
+```
+
+The official upstream installation uses `uv`; the separate Conda or venv environment
+above is equivalent for this repository's runners. The default launcher expects
+`/home/czw/miniconda3/envs/relaycaching/bin/python`; for venv or another Conda prefix,
+supply the environment's interpreter with `--relay-python`.
+
+Run one external baseline through the common benchmark launcher:
+
+```bash
+python scripts/run_benchmark.py --method relaycaching --reasoning no --model 4b \
+  --input data/benchmark/benchmark_argkp_deal_harmbench_301.jsonl \
+  --output-root results/benchmark_argkp_deal_harmbench_301 \
+  --relay-python /path/to/relaycaching/bin/python
+```
+
+Replace `relaycaching` with `cacheblend` or `epic` to run the other two baselines.
+`scripts/run_relay_methods_all.sh 4b` is a convenience wrapper when invoking the
+external methods directly. Their sample-level files use one row per cross direction;
+the direct-KV runners use one row containing both directions.
+
+## KVCOMM-style calibration
+
+`scripts/run_kvcomm.py` implements the prefix-offset KVCOMM-style calibration used
+in this project. It does not require external source code, but it requires an existing
+Full run with the identical model, input JSONL, and reasoning mode. The unified launcher
+enforces that dependency:
+
+```bash
+python scripts/run_benchmark.py --method full --reasoning no --model 4b \
+  --input data/benchmark/benchmark_argkp_deal_harmbench_301.jsonl \
+  --output-root results/benchmark_argkp_deal_harmbench_301
+
+python scripts/run_benchmark.py --method kvcomm --reasoning no --model 4b \
+  --input data/benchmark/benchmark_argkp_deal_harmbench_301.jsonl \
+  --output-root results/benchmark_argkp_deal_harmbench_301
+```
+
+With `--method all`, Full runs before KVCOMM automatically.
+
 ## Building another benchmark slice
 
 The benchmark builder accepts an explicit dataset list and common quota.  For
@@ -114,11 +296,15 @@ python scripts/prepare_benchmark.py \
   --output data/benchmark/benchmark_argkp_deal_harmbench_301.jsonl
 ```
 
-Run every benchmark method against any newly generated JSONL by passing it to
-the existing launcher:
+Run the ten-method suite (`Full`, `Reuse`, `Clean`, `Tail-16`, `Tail-16 + post`,
+`Post`, `RelayCaching`, `CacheBlend`, `EPIC`, and `KVCOMM`) against any newly
+generated JSONL:
 
 ```bash
-python scripts/run_benchmark.py --method all --reasoning no --model 1.7b \
-  --input data/benchmark/benchmark_argkp_deal_harmbench_301.jsonl \
-  --output-root results/benchmark_argkp_deal_harmbench_301
+bash scripts/run_benchmark_301.sh --model-size 4b --reasoning off
 ```
+
+For a custom input or a single method, use `scripts/run_benchmark.py` directly.
+The suite runner accepts `--model-size {1.7b,4b,8b}` and `--reasoning {on,off}`,
+resumes completed sample files by default, and writes a method-by-dataset table under
+`analysis/outputs/` after all methods finish.

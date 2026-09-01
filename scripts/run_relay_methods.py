@@ -43,11 +43,12 @@ from RelayCaching.llm.config import RelayCachingConfig
 from RelayCaching.llm.gpt_chat import LLMChat
 
 
+MODELSCOPE_CACHE = Path(os.environ.get("MODELSCOPE_CACHE", Path.home() / ".cache" / "modelscope"))
 MODEL_PATHS = {
-    "0.6b": "/home/czw/.cache/modelscope/models/Qwen--Qwen3-0.6B/snapshots/master",
-    "1.7b": "/home/czw/.cache/modelscope/models/Qwen--Qwen3-1.7B/snapshots/master",
-    "4b": "/home/czw/.cache/modelscope/models/Qwen--Qwen3-4B/snapshots/master",
-    "8b": "/home/czw/.cache/modelscope/models/Qwen--Qwen3-8B/snapshots/master",
+    "0.6b": str(MODELSCOPE_CACHE / "models/Qwen--Qwen3-0.6B/snapshots/master"),
+    "1.7b": str(MODELSCOPE_CACHE / "models/Qwen--Qwen3-1.7B/snapshots/master"),
+    "4b": str(MODELSCOPE_CACHE / "models/Qwen--Qwen3-4B/snapshots/master"),
+    "8b": str(MODELSCOPE_CACHE / "models/Qwen--Qwen3-8B/snapshots/master"),
 }
 METHODS = ("relaycaching", "cacheblend", "epic")
 
