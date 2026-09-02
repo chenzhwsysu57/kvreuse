@@ -78,7 +78,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--end-layer", type=int, default=-1)
     parser.add_argument("--tau-dev", type=float, default=0.0)
     parser.add_argument("--tau-inf", type=float, default=0.0)
-    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Discard existing samples and rerun every direction instead of resuming.",
+    )
     return parser.parse_args()
 
 
@@ -234,10 +237,46 @@ async def run(args: argparse.Namespace) -> None:
     output_dir = output_base / args.method / f"qwen3-{args.model}"
     output_dir.mkdir(parents=True, exist_ok=True)
     result_path = output_dir / "samples.jsonl"
+    existing_rows: list[dict[str, Any]] = []
+    completed_keys: set[tuple[str, str, str]] = set()
     if result_path.exists() and not args.overwrite:
-        raise FileExistsError(f"{result_path} exists; use --overwrite or a new --output-root")
+        with result_path.open(encoding="utf-8") as handle:
+            for line in handle:
+                row = json.loads(line)
+                existing_rows.append(row)
+                # Failed rows have no ``correct`` key and are retried on resume.
+                if "correct" in row:
+                    completed_keys.add((row["task_id"], row["source_side"], row["target_side"]))
+        pending_examples = [
+            example
+            for example in examples
+            if (example.task_id, example.source, example.target) not in completed_keys
+        ]
+        print(
+            f"Resuming {result_path}: {len(completed_keys)} successful directions already present; "
+            f"{len(pending_examples)} remaining.",
+            flush=True,
+        )
+    else:
+        pending_examples = examples
     metadata_path = output_dir / "adapter_prompts.jsonl"
     write_metadata(metadata_path, records, explicit_reasoning=args.explicit_reasoning)
+
+    if not pending_examples:
+        successes = [row for row in existing_rows if "correct" in row]
+        summary = {
+            "method": args.method, "model": args.model,
+            "input": str(args.input), "records": len(records), "evaluated_directions": len(examples),
+            "use_debug_selection_direction": args.use_debug_selection_direction,
+            "completed": len(successes), "failures": len(existing_rows) - len(successes),
+            "correct": sum(bool(row["correct"]) for row in successes),
+            "accuracy": (sum(bool(row["correct"]) for row in successes) / len(successes)) if successes else None,
+            "explicit_reasoning": args.explicit_reasoning,
+            "adapter": "static shared_block prefetched under source prefix; official RelayCaching placeholder path",
+        }
+        (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(summary, indent=2))
+        return
 
     config = _make_config(args)
     model_path = MODEL_PATHS[args.model]
@@ -250,11 +289,12 @@ async def run(args: argparse.Namespace) -> None:
         target, assistant_prefill=None if args.explicit_reasoning else BOXED_PREFILL
     )
 
-    correct = 0
-    completed = 0
-    failures = 0
-    with result_path.open("w", encoding="utf-8") as output:
-        for index, example in enumerate(examples, start=1):
+    correct = sum(bool(row["correct"]) for row in existing_rows if "correct" in row)
+    completed = sum("correct" in row for row in existing_rows)
+    failures = sum("correct" not in row for row in existing_rows)
+    output_mode = "a" if existing_rows else "w"
+    with result_path.open(output_mode, encoding="utf-8") as output:
+        for index, example in enumerate(pending_examples, start=1):
             message = f"{example.task_id}::{example.source}_to_{example.target}"
             request_uid = f"static-block-{uuid.uuid4().hex}"
             source.set_id(example.source, "source")
@@ -324,7 +364,7 @@ async def run(args: argparse.Namespace) -> None:
             output.flush()
             LLMChat.cleanup_message_kv_cache(message)
             print(
-                f"[{index}/{len(examples)}] {example.dataset} {example.source}_to_{example.target} "
+                f"[{index}/{len(pending_examples)}] {example.dataset} {example.source}_to_{example.target} "
                 f"completed={completed} failures={failures} "
                 f"accuracy={(correct / completed) if completed else float('nan'):.3f}",
                 flush=True,

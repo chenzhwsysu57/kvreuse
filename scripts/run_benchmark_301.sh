@@ -73,6 +73,8 @@ METHODS=(
   tail16_recompute
   tail16_post_recompute
   ours_post
+  ours_repeat_txt
+  ours_repeat_kv
   relaycaching
   cacheblend
   epic

@@ -32,7 +32,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INPUT = ROOT / "data/benchmark/benchmark_250.jsonl"
 METHODS = (
-    "full", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute", "ours_post", "ours_precaution",
+    "full", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute",
+    "ours_post", "ours_precaution", "ours_repeat_txt", "ours_repeat_kv",
     "kvcomm",
     "relaycaching", "cacheblend", "epic",
 )
@@ -64,7 +65,10 @@ def command_for(args: argparse.Namespace, method: str) -> tuple[list[str], dict[
     if args.overwrite:
         common.append("--overwrite")
 
-    if method in {"full", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute"}:
+    if method in {
+        "full", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute",
+        "ours_repeat_txt", "ours_repeat_kv",
+    }:
         command = [
             str(args.kvreuse_python), "-u", str(ROOT / "scripts/run_direct_reuse.py"),
             "--method", method,

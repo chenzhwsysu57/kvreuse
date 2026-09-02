@@ -281,6 +281,18 @@ def with_post_task_restatement(record: dict[str, Any], side: str) -> dict[str, A
     return modified
 
 
+def with_repeated_target_prefix(record: dict[str, Any], side: str) -> dict[str, Any]:
+    """Repeat the complete target prefix after the reusable block as text.
+
+    This is deliberately a text-level counterpart to ``ours_repeat_kv``.  The
+    repeated objective is part of the suffix, so the cached donor block remains
+    exactly the same as ordinary direct reuse.
+    """
+    modified = dict(record)
+    modified["question"] = record[f"prefix_{side}"] + "\n\n" + record["question"]
+    return modified
+
+
 def input_device(model: Any) -> torch.device:
     return next(model.parameters()).device
 
@@ -748,12 +760,17 @@ def main() -> int:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, default=Path("results/direct_reuse"))
     parser.add_argument(
-        "--method", choices=("all", "full", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute"), default="all",
+        "--method", choices=(
+            "all", "full", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute",
+            "ours_repeat_txt", "ours_repeat_kv",
+        ), default="all",
         help="Generate dense full outputs, source-prefixed RoPE cross-reuse, or clean-block RoPE reuse. "
              "clean_reuse encodes the shared block with no prefix at all. tail16_recompute reuses the "
              "source-conditioned block except for its final 16 tokens, which are recomputed under the "
              "target cache. tail16_post_recompute additionally inserts a target-task restatement after "
-             "the block. Reuse-only modes still perform "
+             "the block. ours_repeat_txt repeats the complete target prefix after the block as text; "
+             "ours_repeat_kv appends that target-prefix cache after the transplanted block with RoPE "
+             "relocation. Reuse-only modes still perform "
              "non-generative target full forwards for reference logits and KV similarity.",
     )
     parser.add_argument("--datasets", nargs="*")
@@ -819,10 +836,15 @@ def main() -> int:
     config_path = output_dir / "run_config.json"
     conditions = ALL_CONDITIONS if args.run_self_controls else CROSS_CONDITIONS
     run_full = args.method in {"all", "full"}
-    run_reuse = args.method in {"all", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute"}
+    run_reuse = args.method in {
+        "all", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute",
+        "ours_repeat_txt", "ours_repeat_kv",
+    }
     clean_reuse = args.method == "clean_reuse"
     tail16_recompute = args.method in {"tail16_recompute", "tail16_post_recompute"}
     post_restatement = args.method == "tail16_post_recompute"
+    repeat_prefix_text = args.method == "ours_repeat_txt"
+    repeat_prefix_kv = args.method == "ours_repeat_kv"
     run_config = {
         "experiment": "direct_shared_block_kv_reuse",
         "method": args.method,
@@ -850,6 +872,11 @@ def main() -> int:
         "reuse_block_context": "no_prefix" if clean_reuse else "source_agent_prefix",
         "tail_recompute_tokens": 16 if tail16_recompute else 0,
         "post_task_restatement": post_restatement,
+        "repeat_target_prefix_text": repeat_prefix_text,
+        "repeat_target_prefix_kv": repeat_prefix_kv,
+        "repeat_target_prefix_kv_rope": (
+            "inverse_source_then_apply_target_at_prefix_plus_block" if repeat_prefix_kv else None
+        ),
         "value_correction": "none",
         "self_kl_atol": args.self_kl_atol,
         "self_logit_cos_min": args.self_logit_cos_min,
@@ -922,7 +949,11 @@ def main() -> int:
             args.retry_max_new_tokens if record["task_id"] in retry_task_ids else args.max_new_tokens
         )
         parts = {
-            side: build_prompt_parts(tokenizer, with_post_task_restatement(record, side) if post_restatement else record, side,
+            side: build_prompt_parts(
+                tokenizer,
+                with_post_task_restatement(record, side) if post_restatement else
+                with_repeated_target_prefix(record, side) if repeat_prefix_text else record,
+                side,
                                      enable_thinking=args.enable_thinking,
                                      explicit_reasoning=args.explicit_reasoning,
                                      boxed_output=args.boxed_output,
@@ -1013,6 +1044,20 @@ def main() -> int:
                     _, mixed = forward_suffix(model, mixed, parts[target].block_ids[block_index:block_index + 1])
             else:
                 mixed = splice_prefix_block(target_prefixes[target], relocated)
+            repeated_prefix_tokens = 0
+            repeated_prefix_start = None
+            if repeat_prefix_kv:
+                # target_prefixes[target] was encoded at positions 0..P-1.
+                # It is now appended after target-prefix + transplanted-block,
+                # so its post-RoPE Keys must move to P+B..P+B+P-1. Values are
+                # position-independent and are copied by relocate_block.
+                repeated_prefix_start = mixed[0][0].shape[-2]
+                repeated_prefix = relocate_block(
+                    model, target_prefixes[target], 0, repeated_prefix_start
+                )
+                repeated_prefix_tokens = parts[target].prefix_ids.numel()
+                mixed = splice_prefix_block(mixed, repeated_prefix)
+                del repeated_prefix
             logits, prompt_layers = forward_suffix(model, mixed, parts[target].suffix_ids)
             generation_layers = prompt_layers
             if placeholder_ids is not None:
@@ -1050,6 +1095,8 @@ def main() -> int:
                 "mean_key_cosine_before_rope": float(raw_key.mean()),
                 "mean_value_cosine": float(value_cosine.mean()),
                 "recomputed_tail_tokens": recomputed_tail_tokens,
+                "repeated_target_prefix_tokens": repeated_prefix_tokens,
+                "repeated_target_prefix_start": repeated_prefix_start,
             })
             reuse_results[condition] = result
             del relocated, mixed, prompt_layers, generation_layers, logits
