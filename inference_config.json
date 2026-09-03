@@ -10,6 +10,8 @@
   "datasets": [
     "argkp",
     "deal_or_no_deal",
+    "fantom",
+    "fantom_access",
     "job_interview",
     "helpsteer2",
     "pku_safe_rlhf",

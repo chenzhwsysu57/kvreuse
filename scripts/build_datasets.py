@@ -12,6 +12,7 @@ import json
 import random
 import re
 import sys
+import tarfile
 import zipfile
 from collections import defaultdict
 from pathlib import Path
@@ -522,6 +523,204 @@ def build_job_interview(raw: Path, seed: int) -> list[dict[str, Any]]:
     return records
 
 
+def load_fantom_source(raw: Path) -> list[dict[str, Any]]:
+    """Load the official FANToM JSON from its pinned release archive."""
+    archive_path = raw / "fantom" / "fantom.tar.gz"
+    with tarfile.open(archive_path, "r:gz") as archive:
+        members = [member for member in archive.getmembers() if Path(member.name).name == "fantom_v1.json"]
+        if len(members) != 1:
+            raise ValueError("FANToM archive must contain exactly one fantom_v1.json")
+        handle = archive.extractfile(members[0])
+        if handle is None:
+            raise ValueError("FANToM archive member could not be read")
+        source = json.load(handle)
+    if not isinstance(source, list):
+        raise ValueError("FANToM fantom_v1.json must contain a list")
+    return source
+
+
+def fantom_statement(text: Any) -> str:
+    return " ".join(str(text).split())
+
+
+def build_fantom(raw: Path, seed: int) -> list[dict[str, Any]]:
+    """Build joining-speaker versus witness belief conflicts from FANToM."""
+    by_conversation: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row_index, row in enumerate(load_fantom_source(raw)):
+        if not isinstance(row, dict):
+            continue
+        joining_speaker = fantom_statement(row.get("joining_speaker", ""))
+        fact_qa = row.get("factQA", {})
+        access_qa = row.get("infoAccessibilityQA_list", {})
+        full_context = str(row.get("full_context", "")).strip()
+        missed_info = fantom_statement(row.get("missed_info", ""))
+        full_fact = fantom_statement(fact_qa.get("correct_answer", "")) if isinstance(fact_qa, dict) else ""
+        known_speakers = access_qa.get("correct_answer", []) if isinstance(access_qa, dict) else []
+        if not isinstance(known_speakers, list):
+            continue
+        known_speakers = sorted(fantom_statement(name) for name in known_speakers if fantom_statement(name))
+        if not joining_speaker or not full_context or not missed_info or not full_fact:
+            continue
+        if joining_speaker in known_speakers or not known_speakers:
+            continue
+        for belief_index, belief_qa in enumerate(row.get("beliefQAs", [])):
+            if not isinstance(belief_qa, dict):
+                continue
+            if belief_qa.get("missed_info_accessibility") != "inaccessible":
+                continue
+            partial_belief = fantom_statement(belief_qa.get("correct_answer", ""))
+            if not partial_belief or partial_belief == full_fact:
+                continue
+            by_conversation[str(row.get("conv_id", row_index))].append({
+                "row_index": row_index,
+                "set_id": str(row.get("set_id", "")),
+                "belief_index": belief_index,
+                "joining_speaker": joining_speaker,
+                "witness": known_speakers[0],
+                "known_speakers": known_speakers,
+                "full_context": full_context,
+                "missed_info": missed_info,
+                "full_fact": full_fact,
+                "partial_belief": partial_belief,
+            })
+
+    records: list[dict[str, Any]] = []
+    for conversation_id in sorted(by_conversation):
+        candidates = sorted(by_conversation[conversation_id], key=lambda item: (item["set_id"], item["belief_index"]))
+        selected = candidates[stable_rng(seed, f"fantom-scenario:{conversation_id}").randrange(len(candidates))]
+        statements = [
+            "Full-information account: " + selected["full_fact"],
+            "Limited-information account: " + selected["partial_belief"],
+        ]
+        order = [0, 1]
+        stable_rng(seed, f"fantom-order:{conversation_id}:{selected['set_id']}").shuffle(order)
+        displayed_statements = [statements[index] for index in order]
+        records.append({
+            "task_id": f"fantom-conv-{conversation_id}-set-{selected['set_id']}",
+            "dataset": "fantom",
+            "prefix_a": (
+                f"Assess the belief held by {selected['joining_speaker']}. This person joined only after the "
+                "relevant exchange, so do not attribute information they did not observe."
+            ),
+            "prefix_b": (
+                f"Assess the belief held by {selected['witness']}. This person observed the relevant exchange "
+                "and therefore has access to the full fact."
+            ),
+            "shared_block": (
+                "Conversation:\n" + selected["full_context"] + "\n\n"
+                "Relevant missed information:\n" + selected["missed_info"] + "\n\n"
+                "Candidate belief accounts:\n" + "\n".join(
+                    f"[{LETTERS[index]}] {statement}" for index, statement in enumerate(displayed_statements)
+                )
+            ),
+            "question": "Which account best represents the target person's belief? Return only one option letter: A or B.",
+            "gold_a": LETTERS[order.index(1)],
+            "gold_b": LETTERS[order.index(0)],
+            "metric": "exact_match",
+            "metadata": {
+                "source_version": "1.0",
+                "source_row": selected["row_index"],
+                "source_set_id": selected["set_id"],
+                "source_conversation_id": conversation_id,
+                "source_belief_index": selected["belief_index"],
+                "joining_speaker": selected["joining_speaker"],
+                "witness": selected["witness"],
+                "known_speakers": selected["known_speakers"],
+                "information_access": "joining_speaker_inaccessible_vs_witness_accessible",
+                "candidate_order": order,
+                "candidate_types": ["full_information" if index == 0 else "limited_information" for index in order],
+                "deduplication": "one_inaccessible_belief_scenario_per_source_conversation",
+            },
+        })
+    return records
+
+
+def build_fantom_access(raw: Path, seed: int) -> list[dict[str, Any]]:
+    """Build symmetric, directly answerable information-access conflicts from FANToM.
+
+    Unlike ``build_fantom``, this task does not ask the model to suppress facts
+    visible in the prompt while simulating a character's belief.  Both sides
+    instead answer the same concrete access question for different speakers:
+    the joining speaker did not have the information and a witnessed speaker
+    did.  The official accessibility annotation supplies that invariant.
+    """
+    by_conversation: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row_index, row in enumerate(load_fantom_source(raw)):
+        if not isinstance(row, dict):
+            continue
+        joining_speaker = fantom_statement(row.get("joining_speaker", ""))
+        fact_qa = row.get("factQA", {})
+        access_qa = row.get("infoAccessibilityQA_list", {})
+        full_context = str(row.get("full_context", "")).strip()
+        full_fact = fantom_statement(fact_qa.get("correct_answer", "")) if isinstance(fact_qa, dict) else ""
+        known_speakers = access_qa.get("correct_answer", []) if isinstance(access_qa, dict) else []
+        if not isinstance(known_speakers, list):
+            continue
+        known_speakers = sorted(fantom_statement(name) for name in known_speakers if fantom_statement(name))
+        if not joining_speaker or not full_context or not full_fact or joining_speaker in known_speakers or not known_speakers:
+            continue
+        # Retain only facts for which FANToM explicitly marks the joining
+        # speaker's corresponding belief question as inaccessible.
+        inaccessible_indexes = [
+            index for index, belief_qa in enumerate(row.get("beliefQAs", []))
+            if isinstance(belief_qa, dict) and belief_qa.get("missed_info_accessibility") == "inaccessible"
+        ]
+        if not inaccessible_indexes:
+            continue
+        by_conversation[str(row.get("conv_id", row_index))].append({
+            "row_index": row_index,
+            "set_id": str(row.get("set_id", "")),
+            "belief_index": inaccessible_indexes[0],
+            "joining_speaker": joining_speaker,
+            "witness": known_speakers[0],
+            "known_speakers": known_speakers,
+            "full_context": full_context,
+            "full_fact": full_fact,
+        })
+
+    records: list[dict[str, Any]] = []
+    for conversation_id in sorted(by_conversation):
+        candidates = sorted(by_conversation[conversation_id], key=lambda item: (item["set_id"], item["belief_index"]))
+        selected = candidates[stable_rng(seed, f"fantom-access-scenario:{conversation_id}").randrange(len(candidates))]
+        answer_order = ["YES", "NO"]
+        stable_rng(seed, f"fantom-access-order:{conversation_id}:{selected['set_id']}").shuffle(answer_order)
+        displayed_answers = [
+            f"[{LETTERS[index]}] {answer.title()}." for index, answer in enumerate(answer_order)
+        ]
+        records.append({
+            "task_id": f"fantom-access-conv-{conversation_id}-set-{selected['set_id']}",
+            "dataset": "fantom_access",
+            "prefix_a": f"Target person: {selected['joining_speaker']}.",
+            "prefix_b": f"Target person: {selected['witness']}.",
+            "shared_block": (
+                "Conversation:\n" + selected["full_context"] + "\n\n"
+                "Proposition:\n" + selected["full_fact"] + "\n\n"
+                "Answer options:\n" + "\n".join(displayed_answers)
+            ),
+            "question": (
+                "Based only on the conversation timeline, did the target person have access to the proposition "
+                "by the end of this conversation? Return only one option letter: A or B."
+            ),
+            "gold_a": LETTERS[answer_order.index("NO")],
+            "gold_b": LETTERS[answer_order.index("YES")],
+            "metric": "exact_match",
+            "metadata": {
+                "source_version": "1.0",
+                "source_row": selected["row_index"],
+                "source_set_id": selected["set_id"],
+                "source_conversation_id": conversation_id,
+                "source_belief_index": selected["belief_index"],
+                "joining_speaker": selected["joining_speaker"],
+                "witness": selected["witness"],
+                "known_speakers": selected["known_speakers"],
+                "information_access": "joining_speaker_inaccessible_vs_witness_accessible",
+                "answer_order": answer_order,
+                "deduplication": "one_inaccessible_access_scenario_per_source_conversation",
+            },
+        })
+    return records
+
+
 def build_harmbench_contextual(raw: Path) -> list[dict[str, Any]]:
     """Construct benign-vs-operational intent classification over shared contexts."""
     path = raw / "harmbench_contextual" / "harmbench_behaviors_text_test.csv"
@@ -698,6 +897,8 @@ def main() -> int:
         "argkp",
         "helpsteer2",
         "deal_or_no_deal",
+        "fantom",
+        "fantom_access",
         "job_interview",
         "pku_safe_rlhf",
         "harmbench_contextual",
@@ -712,6 +913,8 @@ def main() -> int:
         "argkp": lambda: build_argkp(args.raw_dir, args.seed),
         "helpsteer2": lambda: build_helpsteer(args.raw_dir),
         "deal_or_no_deal": lambda: build_deal(args.raw_dir, args.seed),
+        "fantom": lambda: build_fantom(args.raw_dir, args.seed),
+        "fantom_access": lambda: build_fantom_access(args.raw_dir, args.seed),
         "job_interview": lambda: build_job_interview(args.raw_dir, args.seed),
         "pku_safe_rlhf": lambda: build_pku_safe_rlhf(args.raw_dir, args.seed),
         "harmbench_contextual": lambda: build_harmbench_contextual(args.raw_dir),

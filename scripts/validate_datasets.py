@@ -100,6 +100,61 @@ def validate_job_interview_record(record: dict[str, object]) -> None:
         raise ValueError("JobInterview recruiter utility margin is below threshold")
 
 
+def validate_fantom_record(record: dict[str, object]) -> None:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("FANToM metadata is required")
+    joining = metadata.get("joining_speaker")
+    witness = metadata.get("witness")
+    known = metadata.get("known_speakers")
+    order = metadata.get("candidate_order")
+    kinds = metadata.get("candidate_types")
+    if not isinstance(joining, str) or not joining or not isinstance(witness, str) or not witness:
+        raise ValueError("FANToM speaker identities are required")
+    if not isinstance(known, list) or witness not in known or joining in known:
+        raise ValueError("FANToM information-access invariant failed")
+    if metadata.get("information_access") != "joining_speaker_inaccessible_vs_witness_accessible":
+        raise ValueError("FANToM access construction is invalid")
+    if not isinstance(order, list) or sorted(order) != [0, 1]:
+        raise ValueError("FANToM candidate order is invalid")
+    if not isinstance(kinds, list) or len(kinds) != 2 or set(kinds) != {"full_information", "limited_information"}:
+        raise ValueError("FANToM candidate types are invalid")
+    full_index = kinds.index("full_information")
+    limited_index = kinds.index("limited_information")
+    if record["gold_a"] != chr(ord("A") + limited_index):
+        raise ValueError("FANToM joining-speaker gold must select limited information")
+    if record["gold_b"] != chr(ord("A") + full_index):
+        raise ValueError("FANToM witness gold must select full information")
+    shared = str(record["shared_block"])
+    if not shared.startswith("Conversation:\n") or "\n\nRelevant missed information:\n" not in shared:
+        raise ValueError("FANToM shared context markers are missing")
+
+
+def validate_fantom_access_record(record: dict[str, object]) -> None:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("FANToM-access metadata is required")
+    joining = metadata.get("joining_speaker")
+    witness = metadata.get("witness")
+    known = metadata.get("known_speakers")
+    answer_order = metadata.get("answer_order")
+    if not isinstance(joining, str) or not joining or not isinstance(witness, str) or not witness:
+        raise ValueError("FANToM-access speaker identities are required")
+    if not isinstance(known, list) or witness not in known or joining in known:
+        raise ValueError("FANToM-access information invariant failed")
+    if metadata.get("information_access") != "joining_speaker_inaccessible_vs_witness_accessible":
+        raise ValueError("FANToM-access construction is invalid")
+    if not isinstance(answer_order, list) or sorted(answer_order) != ["NO", "YES"]:
+        raise ValueError("FANToM-access answer order is invalid")
+    if record["gold_a"] != chr(ord("A") + answer_order.index("NO")):
+        raise ValueError("FANToM-access joining-speaker gold must be NO")
+    if record["gold_b"] != chr(ord("A") + answer_order.index("YES")):
+        raise ValueError("FANToM-access witness gold must be YES")
+    shared = str(record["shared_block"])
+    if not shared.startswith("Conversation:\n") or "\n\nProposition:\n" not in shared or "\n\nAnswer options:\n" not in shared:
+        raise ValueError("FANToM-access shared context markers are missing")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("paths", nargs="*", type=Path, default=[Path("data/processed/all.jsonl")])
@@ -118,6 +173,10 @@ def main() -> int:
                         validate_harmbench_record(record)
                     elif record["dataset"] == "job_interview":
                         validate_job_interview_record(record)
+                    elif record["dataset"] == "fantom":
+                        validate_fantom_record(record)
+                    elif record["dataset"] == "fantom_access":
+                        validate_fantom_access_record(record)
                 except ValueError as error:
                     raise ValueError(f"{path}:{line_number}: {error}") from error
                 if record["task_id"] in seen:

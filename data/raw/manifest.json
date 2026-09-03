@@ -5,7 +5,8 @@
     "deal_or_no_deal": "bbb93bbf00f69fced75d5c0d22e855bda07c9b78",
     "pku_safe_rlhf": "9421ffafec3fa40a1f1a7d567b4d525079477ecb",
     "harmbench_contextual": "8e1604d1171fe8a48d8febecd22f600e462bdcdd",
-    "job_interview": "d4c2bf63b4da95b342fd952065f9ad3e97179134"
+    "job_interview": "d4c2bf63b4da95b342fd952065f9ad3e97179134",
+    "fantom": "1.0"
   },
   "hf_endpoint": "https://hf-mirror.com",
   "files": [
@@ -183,6 +184,13 @@
       "url": "https://raw.githubusercontent.com/gucci-j/negotiation-breakdown-detection/d4c2bf63b4da95b342fd952065f9ad3e97179134/LICENSE",
       "bytes": 1107,
       "sha256": "b1c72068b3d8b1f4dc0a509035aee17848ff129b259d6889a76754512aceb873"
+    },
+    {
+      "dataset": "fantom",
+      "path": "data/raw/fantom/fantom.tar.gz",
+      "url": "https://storage.googleapis.com/ai2-mosaic-public/projects/fantom/fantom.tar.gz",
+      "bytes": 1040898,
+      "sha256": "1d08dfa0ea474c7f83b9bc7e3a7b466eab25194043489dd618b4c5223e1253a4"
     }
   ]
 }

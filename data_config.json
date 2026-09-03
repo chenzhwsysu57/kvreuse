@@ -25,5 +25,20 @@
     "minimum_candidates": 3,
     "minimum_unique_optimum_margin": 0.05,
     "require_opposite_role_optima": true
+  },
+  "fantom": {
+    "source_version": "1.0",
+    "source_context": "full_context",
+    "scenario": "joining_speaker_inaccessible_vs_witness_accessible",
+    "deduplication": "one_inaccessible_belief_scenario_per_source_conversation",
+    "require_opposite_information_access": true
+  },
+  "fantom_access": {
+    "source_version": "1.0",
+    "source_context": "full_context",
+    "scenario": "joining_speaker_inaccessible_vs_witness_accessible",
+    "task": "direct_information_access_yes_no",
+    "deduplication": "one_inaccessible_access_scenario_per_source_conversation",
+    "require_opposite_information_access": true
   }
 }

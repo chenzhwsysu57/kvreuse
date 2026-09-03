@@ -17,6 +17,16 @@
       "written": 1000,
       "sampling": "deterministic_random"
     },
+    "fantom": {
+      "valid_before_sampling": 237,
+      "written": 237,
+      "sampling": "deterministic_random"
+    },
+    "fantom_access": {
+      "valid_before_sampling": 237,
+      "written": 237,
+      "sampling": "deterministic_random"
+    },
     "job_interview": {
       "valid_before_sampling": 273,
       "written": 273,

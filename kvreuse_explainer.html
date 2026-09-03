@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="用直观方式解释 Cross-prefix KV Reuse 研究：当角色、标准或利益改变时，复用共享文本的 KV cache 是否仍然可靠。">
+  <title>KV Reuse：快一点，还是理解错了？</title>
+  <style>
+    :root {
+      --ink: #17211d;
+      --muted: #66716b;
+      --paper: #f5f2e9;
+      --panel: rgba(255, 255, 255, .72);
+      --line: rgba(23, 33, 29, .13);
+      --green: #1d6c52;
+      --green-2: #d9eee6;
+      --orange: #e26f3f;
+      --orange-2: #fae4d9;
+      --blue: #2d6294;
+      --blue-2: #dce9f4;
+      --shadow: 0 18px 55px rgba(44, 52, 47, .10);
+      --radius: 26px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 4%, rgba(226,111,63,.13), transparent 25rem),
+        radial-gradient(circle at 88% 20%, rgba(29,108,82,.13), transparent 30rem),
+        var(--paper);
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      line-height: 1.65;
+    }
+
+    a { color: inherit; }
+    button { font: inherit; }
+    .wrap { width: min(1160px, calc(100% - 40px)); margin: auto; }
+
+    nav {
+      position: sticky; top: 0; z-index: 20;
+      backdrop-filter: blur(16px);
+      background: rgba(245,242,233,.78);
+      border-bottom: 1px solid var(--line);
+    }
+    .nav-inner { height: 68px; display: flex; align-items: center; justify-content: space-between; }
+    .brand { font-weight: 800; letter-spacing: -.03em; }
+    .brand span { color: var(--orange); }
+    .nav-links { display: flex; gap: 26px; font-size: 14px; color: var(--muted); }
+    .nav-links a { text-decoration: none; }
+
+    .hero { min-height: 720px; display: grid; grid-template-columns: 1.03fr .97fr; gap: 64px; align-items: center; padding: 84px 0 90px; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 750; letter-spacing: .12em; color: var(--green); text-transform: uppercase; }
+    .eyebrow::before { content: ""; width: 24px; height: 2px; background: currentColor; }
+    h1 { font-size: clamp(50px, 6.3vw, 84px); letter-spacing: -.065em; line-height: .98; margin: 24px 0 30px; max-width: 760px; }
+    h1 em { color: var(--orange); font-style: normal; }
+    .lead { max-width: 650px; font-size: 20px; color: #4d5852; margin: 0; }
+    .hero-actions { display: flex; gap: 12px; margin-top: 34px; }
+    .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; padding: 0 20px; border-radius: 999px; text-decoration: none; font-weight: 700; font-size: 14px; border: 1px solid var(--line); }
+    .btn-primary { color: white; background: var(--ink); border-color: var(--ink); }
+    .btn-ghost { background: rgba(255,255,255,.45); }
+
+    .memory-stage { position: relative; min-height: 510px; display: grid; place-items: center; }
+    .orbit { position: absolute; width: 470px; height: 470px; border: 1px dashed rgba(29,108,82,.24); border-radius: 50%; animation: spin 36s linear infinite; }
+    .orbit::before, .orbit::after { content: ""; position: absolute; border-radius: 50%; }
+    .orbit::before { width: 12px; height: 12px; background: var(--orange); top: 48px; left: 52px; box-shadow: 0 0 0 8px rgba(226,111,63,.12); }
+    .orbit::after { width: 9px; height: 9px; background: var(--green); bottom: 55px; right: 42px; box-shadow: 0 0 0 8px rgba(29,108,82,.12); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .brain-card { position: relative; width: min(430px, 92vw); padding: 32px; border: 1px solid rgba(255,255,255,.75); background: rgba(255,255,255,.68); backdrop-filter: blur(12px); border-radius: 34px; box-shadow: var(--shadow); }
+    .brain-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px; }
+    .brain-title { font-weight: 800; }
+    .live { display: inline-flex; gap: 7px; align-items: center; color: var(--green); font-size: 12px; font-weight: 800; }
+    .live::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 5px rgba(29,108,82,.12); }
+    .sequence { display: grid; gap: 12px; }
+    .token { border-radius: 16px; padding: 15px 17px; font-size: 14px; border: 1px solid transparent; }
+    .token small { display: block; opacity: .62; font-size: 11px; font-weight: 800; letter-spacing: .08em; margin-bottom: 3px; }
+    .token-prefix { background: var(--orange-2); border-color: rgba(226,111,63,.16); }
+    .token-block { background: var(--green-2); border-color: rgba(29,108,82,.16); }
+    .token-question { background: var(--blue-2); border-color: rgba(45,98,148,.15); }
+    .cache-chip { margin: 18px auto 0; width: fit-content; background: var(--ink); color: white; border-radius: 999px; padding: 9px 14px; font-size: 12px; font-weight: 750; }
+
+    section { padding: 100px 0; }
+    .section-kicker { color: var(--orange); font-size: 13px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    h2 { font-size: clamp(38px, 4.4vw, 58px); line-height: 1.08; letter-spacing: -.045em; margin: 14px 0 22px; }
+    .section-intro { max-width: 720px; color: var(--muted); font-size: 18px; }
+
+    .analogy { display: grid; grid-template-columns: .82fr 1.18fr; gap: 56px; align-items: center; }
+    .book-wrap { min-height: 420px; display: grid; place-items: center; position: relative; }
+    .book {
+      width: 330px; height: 230px; position: relative; border-radius: 10px 24px 24px 10px;
+      background: linear-gradient(100deg, #d5d9cd 0 4%, #fffdf7 4% 96%, #e6e3d9 96%);
+      box-shadow: 18px 22px 38px rgba(34,45,39,.16); transform: rotate(-5deg);
+      border: 1px solid rgba(23,33,29,.12); padding: 30px 33px 25px 44px;
+    }
+    .book::after { content: "KV"; display: grid; place-items: center; position: absolute; width: 50px; height: 132px; right: 53px; top: -9px; color: white; font-weight: 900; background: var(--orange); border-radius: 0 0 8px 8px; box-shadow: 0 8px 16px rgba(226,111,63,.25); }
+    .book-lines { height: 9px; border-radius: 99px; background: #d8dbd3; margin: 14px 0; }
+    .book-lines:nth-child(2) { width: 75%; }
+    .book-lines:nth-child(3) { width: 86%; }
+    .note { position: absolute; bottom: 14px; left: 10px; color: var(--muted); font-size: 13px; transform: rotate(-7deg); }
+    .plain-steps { display: grid; gap: 17px; margin-top: 32px; }
+    .plain-step { display: grid; grid-template-columns: 42px 1fr; gap: 14px; align-items: start; }
+    .num { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: white; border: 1px solid var(--line); font-weight: 850; color: var(--green); }
+    .plain-step b { display: block; margin: 1px 0 3px; }
+    .plain-step p { margin: 0; color: var(--muted); }
+
+    .compare-shell { margin-top: 48px; background: rgba(255,255,255,.58); border: 1px solid rgba(255,255,255,.8); box-shadow: var(--shadow); border-radius: 32px; padding: 18px; }
+    .switcher { display: grid; grid-template-columns: 1fr 1fr; background: #e9e6dd; border-radius: 18px; padding: 5px; max-width: 530px; margin: 0 auto 24px; }
+    .switcher button { border: 0; padding: 12px 18px; border-radius: 14px; cursor: pointer; color: var(--muted); background: transparent; font-weight: 750; transition: .2s; }
+    .switcher button.active { color: var(--ink); background: white; box-shadow: 0 5px 15px rgba(26,34,29,.08); }
+    .flow { padding: 28px 18px 20px; min-height: 405px; }
+    .flow-title { text-align: center; font-size: 24px; font-weight: 850; letter-spacing: -.02em; }
+    .flow-sub { text-align: center; color: var(--muted); font-size: 14px; margin-top: 5px; }
+    .lanes { margin: 38px auto 0; max-width: 980px; display: grid; grid-template-columns: 1fr 62px 1fr 62px .88fr; align-items: center; gap: 8px; }
+    .lane-box { min-height: 174px; border: 1px solid var(--line); border-radius: 20px; background: white; padding: 20px; }
+    .lane-label { font-size: 11px; font-weight: 850; color: var(--muted); letter-spacing: .1em; }
+    .blocks { display: flex; gap: 6px; margin: 18px 0; }
+    .mini { height: 34px; border-radius: 7px; flex: 1; position: relative; overflow: hidden; }
+    .mini::after { content: ""; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 20%, rgba(255,255,255,.65), transparent 70%); transform: translateX(-110%); }
+    .recompute .mini::after { animation: sweep 2.4s ease-in-out infinite; }
+    @keyframes sweep { to { transform: translateX(110%); } }
+    .m-prefix { background: var(--orange-2); }
+    .m-block { background: var(--green-2); flex: 2.5; }
+    .m-query { background: var(--blue-2); }
+    .lane-caption { font-size: 13px; color: var(--muted); }
+    .arrow { text-align: center; font-size: 28px; color: #9ba49e; }
+    .result-card { min-height: 174px; border-radius: 20px; background: var(--ink); color: white; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; }
+    .result-card small { opacity: .55; letter-spacing: .08em; font-weight: 800; }
+    .result-main { font-size: 24px; font-weight: 850; }
+    .result-main span { display: block; font-size: 13px; color: #aebbb4; font-weight: 500; margin-top: 5px; }
+    .reuse-only { display: none; }
+    .flow.reuse .reuse-only { display: block; }
+    .flow.reuse .full-only { display: none; }
+    .flow.reuse .source-cache { box-shadow: inset 0 0 0 2px var(--green); }
+    .flow.reuse .target-block { background: repeating-linear-gradient(135deg, var(--green-2), var(--green-2) 8px, #c6e0d6 8px, #c6e0d6 16px); }
+    .warning { display: flex; gap: 12px; max-width: 760px; margin: 30px auto 0; padding: 15px 18px; background: #fff8e5; border: 1px solid #ead99d; border-radius: 15px; font-size: 13px; color: #6c5a24; }
+    .warning strong { color: #473a16; }
+
+    .tasks { background: #19241f; color: white; }
+    .tasks .section-intro { color: #aeb9b3; }
+    .task-tabs { display: flex; flex-wrap: wrap; gap: 9px; margin: 36px 0 22px; }
+    .task-tab { cursor: pointer; border: 1px solid rgba(255,255,255,.18); color: #aeb9b3; background: transparent; padding: 10px 15px; border-radius: 999px; font-size: 13px; }
+    .task-tab.active { color: #17211d; background: white; border-color: white; font-weight: 800; }
+    .task-demo { display: grid; grid-template-columns: .8fr 1.2fr; gap: 18px; }
+    .context-card, .shared-card { border-radius: 24px; padding: 26px; min-height: 330px; }
+    .context-card { background: #26332d; }
+    .shared-card { color: var(--ink); background: #f2efe5; }
+    .card-cap { font-size: 11px; letter-spacing: .1em; font-weight: 850; opacity: .55; margin-bottom: 20px; }
+    .role-row { padding: 15px; border-radius: 14px; margin-bottom: 12px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); }
+    .role-row.active-a { background: rgba(226,111,63,.17); border-color: rgba(226,111,63,.42); }
+    .role-tag { font-size: 11px; color: #ffaf8d; font-weight: 850; margin-bottom: 5px; }
+    .swap-note { font-size: 12px; color: #93a098; margin-top: 22px; }
+    .candidates { display: grid; gap: 9px; }
+    .candidate { display: flex; gap: 10px; align-items: center; border-radius: 12px; padding: 11px 13px; background: white; border: 1px solid var(--line); font-size: 13px; }
+    .letter { flex: 0 0 27px; width: 27px; height: 27px; display: grid; place-items: center; border-radius: 8px; background: var(--green-2); color: var(--green); font-weight: 900; }
+    .answer-change { margin-top: 18px; font-size: 13px; color: var(--muted); }
+    .answer-change b { color: var(--orange); }
+
+    .question-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 44px; }
+    .q-card { min-height: 225px; padding: 24px; border: 1px solid var(--line); background: var(--panel); border-radius: 22px; }
+    .q-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px; margin-bottom: 27px; background: var(--green-2); color: var(--green); font-weight: 900; }
+    .q-card:nth-child(2) .q-icon { color: var(--orange); background: var(--orange-2); }
+    .q-card:nth-child(3) .q-icon { color: var(--blue); background: var(--blue-2); }
+    .q-card:nth-child(4) .q-icon { color: #725c27; background: #f4e8bd; }
+    .q-card b { display: block; font-size: 17px; margin-bottom: 7px; }
+    .q-card p { margin: 0; color: var(--muted); font-size: 14px; }
+
+    .status-box { margin-top: 42px; display: grid; grid-template-columns: .82fr 1.18fr; border: 1px solid var(--line); border-radius: 28px; overflow: hidden; background: rgba(255,255,255,.6); box-shadow: var(--shadow); }
+    .status-copy { padding: 34px; }
+    .status-copy h3 { font-size: 25px; margin: 0 0 14px; letter-spacing: -.02em; }
+    .status-copy p { color: var(--muted); margin: 0; }
+    .status-list { padding: 25px; background: rgba(255,255,255,.65); display: grid; gap: 10px; }
+    .status-item { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: center; padding: 11px 13px; border-radius: 12px; background: white; font-size: 13px; }
+    .check { color: var(--green); font-weight: 950; }
+    .pending { color: var(--orange); }
+    .badge { font-size: 10px; padding: 3px 8px; border-radius: 99px; background: var(--green-2); color: var(--green); font-weight: 850; }
+    .badge.next { background: var(--orange-2); color: var(--orange); }
+
+    .bottom-line { padding: 110px 0 125px; text-align: center; }
+    .bottom-line h2 { max-width: 900px; margin-left: auto; margin-right: auto; }
+    .bottom-line p { max-width: 690px; margin: 0 auto; color: var(--muted); font-size: 18px; }
+    .formula { margin: 36px auto 0; width: fit-content; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; font-weight: 800; }
+    .pill { padding: 10px 16px; border-radius: 999px; background: white; border: 1px solid var(--line); }
+    .pill.green { color: var(--green); background: var(--green-2); }
+    .pill.orange { color: var(--orange); background: var(--orange-2); }
+    footer { border-top: 1px solid var(--line); padding: 25px 0 38px; color: var(--muted); font-size: 12px; }
+    .footer-inner { display: flex; justify-content: space-between; gap: 20px; }
+
+    @media (max-width: 900px) {
+      .hero, .analogy, .task-demo, .status-box { grid-template-columns: 1fr; }
+      .hero { gap: 20px; padding-top: 64px; }
+      .memory-stage { min-height: 480px; }
+      .lanes { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); }
+      .question-grid { grid-template-columns: 1fr 1fr; }
+      .nav-links { display: none; }
+    }
+    @media (max-width: 560px) {
+      .wrap { width: min(100% - 24px, 1160px); }
+      h1 { font-size: 48px; }
+      .hero-actions { flex-direction: column; align-items: stretch; }
+      .orbit { width: 350px; height: 350px; }
+      section { padding: 76px 0; }
+      .question-grid { grid-template-columns: 1fr; }
+      .switcher button { font-size: 12px; padding: 10px 6px; }
+      .flow { padding-left: 4px; padding-right: 4px; }
+      .task-demo > * { padding: 19px; }
+      .footer-inner { flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="wrap nav-inner">
+      <div class="brand">KV<span>REUSE</span> / 研究图解</div>
+      <div class="nav-links">
+        <a href="#idea">一句话解释</a>
+        <a href="#compare">前后对比</a>
+        <a href="#tasks">实验任务</a>
+        <a href="#status">项目进度</a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <header class="wrap hero">
+      <div>
+        <div class="eyebrow">Cross-prefix KV cache reuse</div>
+        <h1>快一点，还是<br><em>理解错了？</em></h1>
+        <p class="lead">当一段文字没有变，但读者的角色、目标或评分标准变了，大模型能否直接复用上一次阅读留下的“记忆”？这个项目就在研究速度与正确理解之间的边界。</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#compare">看前后区别 ↓</a>
+          <a class="btn btn-ghost" href="#tasks">看真实实验</a>
+        </div>
+      </div>
+
+      <div class="memory-stage" aria-label="输入由前缀、共享文本与问题组成，模型会为共享文本生成 KV 记忆">
+        <div class="orbit" aria-hidden="true"></div>
+        <div class="brain-card">
+          <div class="brain-head">
+            <div class="brain-title">模型正在“阅读”</div>
+            <div class="live">CONTEXT</div>
+          </div>
+          <div class="sequence">
+            <div class="token token-prefix"><small>① PREFIX · 阅读视角</small>你代表买方，请争取买方收益最大</div>
+            <div class="token token-block"><small>② SHARED BLOCK · 共享文本</small>同一份商品、数量与候选分配方案</div>
+            <div class="token token-question"><small>③ QUERY · 问题</small>哪一种分配方案最好？</div>
+          </div>
+          <div class="cache-chip">共享文本 → K / V “阅读记忆”</div>
+        </div>
+      </div>
+    </header>
+
+    <section id="idea">
+      <div class="wrap analogy">
+        <div class="book-wrap">
+          <div class="book" aria-hidden="true">
+            <div class="book-lines"></div><div class="book-lines"></div><div class="book-lines"></div><div class="book-lines"></div><div class="book-lines"></div>
+          </div>
+          <div class="note">像给读过的内容夹一枚书签</div>
+        </div>
+        <div>
+          <div class="section-kicker">先不讲技术</div>
+          <h2>KV cache，就像模型的“阅读笔记”</h2>
+          <p class="section-intro">大模型读过一段长文本后，会留下内部计算结果。下次继续对话时，不必从第一页重读，直接翻到书签处即可——这就是 KV cache 能加速生成的直觉。</p>
+          <div class="plain-steps">
+            <div class="plain-step"><div class="num">1</div><div><b>第一次阅读</b><p>模型结合前文，逐字理解共享文本，并形成 KV。</p></div></div>
+            <div class="plain-step"><div class="num">2</div><div><b>文字重复出现</b><p>如果直接复用旧 KV，可以省掉对长文本的重复计算。</p></div></div>
+            <div class="plain-step"><div class="num">?</div><div><b>但视角变了</b><p>旧“阅读笔记”还适用吗？这正是本项目要验证的核心。</p></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="compare">
+      <div class="wrap">
+        <div class="section-kicker">核心对比</div>
+        <h2>同一段文字，两种处理方式</h2>
+        <p class="section-intro">点击切换。注意绿色的“共享文本”：普通方法会在新视角下重新阅读；KV reuse 则把它在旧视角下形成的内部记忆搬过来。</p>
+
+        <div class="compare-shell">
+          <div class="switcher" role="tablist" aria-label="切换推理方法">
+            <button class="active" data-mode="full" role="tab" aria-selected="true">普通方法 · Full recompute</button>
+            <button data-mode="reuse" role="tab" aria-selected="false">复用方法 · KV reuse</button>
+          </div>
+          <div class="flow recompute" id="flow">
+            <div class="flow-title full-only">换个视角，完整重读一次</div>
+            <div class="flow-title reuse-only">换个视角，沿用旧的阅读记忆</div>
+            <div class="flow-sub full-only">计算更多，但共享文本会被新 prefix 重新解释</div>
+            <div class="flow-sub reuse-only">有机会更快，但旧 prefix 的影响可能残留在 KV 中</div>
+
+            <div class="lanes">
+              <div class="lane-box source-cache">
+                <div class="lane-label">第一次 · 角色 A</div>
+                <div class="blocks"><div class="mini m-prefix"></div><div class="mini m-block"></div><div class="mini m-query"></div></div>
+                <div class="lane-caption">“我是买方” + 共享方案 + 问题<br>生成一份角色 A 下的 KV</div>
+              </div>
+              <div class="arrow">→</div>
+              <div class="lane-box">
+                <div class="lane-label">第二次 · 角色 B</div>
+                <div class="blocks full-only"><div class="mini m-prefix"></div><div class="mini m-block"></div><div class="mini m-query"></div></div>
+                <div class="blocks reuse-only"><div class="mini m-prefix"></div><div class="mini m-block target-block"></div><div class="mini m-query"></div></div>
+                <div class="lane-caption full-only">“我是卖方” + 共享方案 + 问题<br><b>全部重新计算</b></div>
+                <div class="lane-caption reuse-only">“我是卖方” + <b>搬来角色 A 的共享 KV</b> + 问题</div>
+              </div>
+              <div class="arrow">→</div>
+              <div class="result-card">
+                <small>我们关心的结果</small>
+                <div class="result-main full-only">可靠基准<span>新视角下正常理解</span></div>
+                <div class="result-main reuse-only">速度 ↔ 理解<span>答案会不会仍像“买方”？</span></div>
+              </div>
+            </div>
+            <div class="warning reuse-only"><span>⚠</span><span><strong>真正的难点：</strong>不仅要比较答案，还必须排除 token 位置、RoPE、attention mask 和 cache 拼接错误。否则“理解变差”可能只是实现 bug。</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tasks" id="tasks">
+      <div class="wrap">
+        <div class="section-kicker">真实任务，不是玩具例子</div>
+        <h2>只换“怎么看”，不换“看什么”</h2>
+        <p class="section-intro">每条数据都固定 shared block，只改变前面的视角，并确保正确答案真的随之变化。这样，才能测到模型是否重新理解了同一段内容。</p>
+
+        <div class="task-tabs" role="tablist">
+          <button class="task-tab active" data-task="argkp">观点立场 · ArgKP</button>
+          <button class="task-tab" data-task="deal">利益角色 · Deal or No Deal</button>
+          <button class="task-tab" data-task="judge">评分标准 · HelpSteer2</button>
+        </div>
+        <div class="task-demo">
+          <div class="context-card">
+            <div class="card-cap">只改变 PREFIX</div>
+            <div class="role-row active-a"><div class="role-tag" id="roleA-label">视角 A · 支持</div><div id="roleA">寻找支持“取消校服”的论据</div></div>
+            <div class="role-row"><div class="role-tag" id="roleB-label">视角 B · 反对</div><div id="roleB">寻找反对“取消校服”的论据</div></div>
+            <div class="swap-note">角色改变 → 判断标准改变 → 正确答案也必须改变</div>
+          </div>
+          <div class="shared-card">
+            <div class="card-cap">SHARED BLOCK 始终一模一样</div>
+            <div class="candidates" id="candidates"></div>
+            <div class="answer-change" id="answerChange"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <div class="section-kicker">项目最终要回答</div>
+        <h2>不是“能不能复用”，而是“何时可以放心复用”</h2>
+        <div class="question-grid">
+          <div class="q-card"><div class="q-icon">01</div><b>正确性会掉多少？</b><p>以完整重算为基准，测量 reuse 后的准确率、概率和输出差异。</p></div>
+          <div class="q-card"><div class="q-icon">02</div><b>什么变化最危险？</b><p>角色、立场、评分维度或利益函数变化，哪一种最容易让旧记忆误导模型？</p></div>
+          <div class="q-card"><div class="q-icon">03</div><b>哪里需要重算？</b><p>是否只重算边界 token、关键 token 或部分层，就能修复理解并保留收益？</p></div>
+          <div class="q-card"><div class="q-icon">04</div><b>真的更快吗？</b><p>在不同 prefix / block 长度与模型大小下，测量真实端到端时间，而非只看理论省算量。</p></div>
+        </div>
+
+        <div class="status-box" id="status">
+          <div class="status-copy">
+            <div class="section-kicker">当前进度</div>
+            <h3>先证明题目有效，再做 reuse 对照</h3>
+            <p>仓库当前主线已完成三类数据的可复现构造，并用 Qwen3-0.6B / 4B 做了不复用 KV 的基线验证。KV 操作是后续里程碑；页面没有把实验设想冒充成最终结论。</p>
+          </div>
+          <div class="status-list">
+            <div class="status-item"><span class="check">✓</span><span>ArgKP / HelpSteer2 / Deal or No Deal 数据构造</span><span class="badge">完成</span></div>
+            <div class="status-item"><span class="check">✓</span><span>过滤两个视角答案相同或不可自动评测的样本</span><span class="badge">完成</span></div>
+            <div class="status-item"><span class="check">✓</span><span>Qwen3 官方 chat template 下的 full recompute 基线</span><span class="badge">完成</span></div>
+            <div class="status-item"><span class="pending">○</span><span>严格校验位置、RoPE、mask 与 cache 拼接的 KV reuse</span><span class="badge next">下一步</span></div>
+            <div class="status-item"><span class="pending">○</span><span>按模型与任务汇总准确率差、概率差和真实性能</span><span class="badge next">下一步</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="bottom-line">
+      <div class="wrap">
+        <div class="section-kicker">一句话总结</div>
+        <h2>重复的文字，不一定意味着重复的理解。</h2>
+        <p>KV reuse 想省掉的是重复阅读的成本；本项目守住的是：当上下文变了，模型仍然必须形成正确的新理解。</p>
+        <div class="formula" aria-label="研究目标：更少重复计算，加上不损害语义理解，等于可信的 KV reuse">
+          <span class="pill green">更少重复计算</span><span>+</span><span class="pill orange">不损害语义理解</span><span>=</span><span class="pill">可信的 KV Reuse</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap footer-inner"><span>Cross-prefix KV Reuse · Visual Explainer</span><span>研究模型：Qwen3-0.6B / 4B / 8B</span></div>
+  </footer>
+
+  <script>
+    const flow = document.querySelector('#flow');
+    document.querySelectorAll('.switcher button').forEach(button => {
+      button.addEventListener('click', () => {
+        const reuse = button.dataset.mode === 'reuse';
+        flow.classList.toggle('reuse', reuse);
+        flow.classList.toggle('recompute', !reuse);
+        document.querySelectorAll('.switcher button').forEach(b => {
+          const active = b === button;
+          b.classList.toggle('active', active);
+          b.setAttribute('aria-selected', String(active));
+        });
+      });
+    });
+
+    const taskData = {
+      argkp: {
+        labelA: '视角 A · 支持', roleA: '寻找支持“取消校服”的论据',
+        labelB: '视角 B · 反对', roleB: '寻找反对“取消校服”的论据',
+        candidates: ['A｜校服昂贵，会加重家庭负担', 'C｜校服带来归属感与团结', 'E｜校服不舒服，也不够美观'],
+        answer: '正确答案随立场从 <b>E</b> 变为 <b>C</b>'
+      },
+      deal: {
+        labelA: '视角 A · Agent A', roleA: '按 Agent A 的物品价值选择最优分配',
+        labelB: '视角 B · Agent B', roleB: '按 Agent B 的物品价值选择最优分配',
+        candidates: ['A｜2 本书 · 0 顶帽子 · 1 个球', 'B｜1 本书 · 1 顶帽子 · 1 个球', 'C｜0 本书 · 2 顶帽子 · 1 个球'],
+        answer: '同一批方案，效用函数改变后，最优选项也改变'
+      },
+      judge: {
+        labelA: '标准 A · Correctness', roleA: '评价回答的事实与推理是否正确',
+        labelB: '标准 B · Verbosity', roleB: '评价回答是否包含过多不必要细节',
+        candidates: ['PROMPT｜用户提出同一个问题', 'RESPONSE｜模型给出同一个回答', 'SCORE｜只能输出 0–4 的离散分数'],
+        answer: '文本完全相同，评分维度改变后，金标准分数也改变'
+      }
+    };
+
+    function renderTask(key) {
+      const d = taskData[key];
+      document.querySelector('#roleA-label').textContent = d.labelA;
+      document.querySelector('#roleA').textContent = d.roleA;
+      document.querySelector('#roleB-label').textContent = d.labelB;
+      document.querySelector('#roleB').textContent = d.roleB;
+      document.querySelector('#candidates').innerHTML = d.candidates.map((text, i) => {
+        const parts = text.split('｜');
+        return `<div class="candidate"><span class="letter">${parts[0]}</span><span>${parts[1]}</span></div>`;
+      }).join('');
+      document.querySelector('#answerChange').innerHTML = d.answer;
+    }
+
+    document.querySelectorAll('.task-tab').forEach(button => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('.task-tab').forEach(b => b.classList.toggle('active', b === button));
+        renderTask(button.dataset.task);
+      });
+    });
+    renderTask('argkp');
+  </script>
+</body>
+</html>

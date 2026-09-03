@@ -20,6 +20,7 @@ DEAL_REV = "bbb93bbf00f69fced75d5c0d22e855bda07c9b78"
 PKU_SAFE_RLHF_REV = "9421ffafec3fa40a1f1a7d567b4d525079477ecb"
 HARMBENCH_REV = "8e1604d1171fe8a48d8febecd22f600e462bdcdd"
 JOB_INTERVIEW_REV = "d4c2bf63b4da95b342fd952065f9ad3e97179134"
+FANTOM_VERSION = "1.0"
 
 
 def sources(hf_endpoint: str) -> dict[str, list[tuple[str, str]]]:
@@ -73,6 +74,12 @@ def sources(hf_endpoint: str) -> dict[str, list[tuple[str, str]]]:
             (
                 f"{github}/gucci-j/negotiation-breakdown-detection/{JOB_INTERVIEW_REV}/LICENSE",
                 "LICENSE",
+            ),
+        ],
+        "fantom": [
+            (
+                "https://storage.googleapis.com/ai2-mosaic-public/projects/fantom/fantom.tar.gz",
+                "fantom.tar.gz",
             ),
         ],
         # Only the official held-out shards are needed for the high-confidence
@@ -161,6 +168,7 @@ def main() -> int:
         "helpsteer2": HELPSTEER_REV,
         "deal_or_no_deal": DEAL_REV,
         "job_interview": JOB_INTERVIEW_REV,
+        "fantom": FANTOM_VERSION,
         "pku_safe_rlhf": PKU_SAFE_RLHF_REV,
         "harmbench_contextual": HARMBENCH_REV,
     }
