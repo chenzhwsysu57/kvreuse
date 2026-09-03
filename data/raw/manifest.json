@@ -4,7 +4,8 @@
     "helpsteer2": "990b2711a36180dd19d9c94b8627844866f8982a",
     "deal_or_no_deal": "bbb93bbf00f69fced75d5c0d22e855bda07c9b78",
     "pku_safe_rlhf": "9421ffafec3fa40a1f1a7d567b4d525079477ecb",
-    "harmbench_contextual": "8e1604d1171fe8a48d8febecd22f600e462bdcdd"
+    "harmbench_contextual": "8e1604d1171fe8a48d8febecd22f600e462bdcdd",
+    "job_interview": "d4c2bf63b4da95b342fd952065f9ad3e97179134"
   },
   "hf_endpoint": "https://hf-mirror.com",
   "files": [
@@ -161,6 +162,27 @@
       "url": "https://raw.githubusercontent.com/centerforaisafety/HarmBench/8e1604d1171fe8a48d8febecd22f600e462bdcdd/LICENSE",
       "bytes": 1074,
       "sha256": "fe29c68dd1216e81e98a6069165e1c720757b23bbcaa6c0cb8f9a957bdaaca80"
+    },
+    {
+      "dataset": "job_interview",
+      "path": "data/raw/job_interview/data.zip",
+      "url": "https://raw.githubusercontent.com/gucci-j/negotiation-breakdown-detection/d4c2bf63b4da95b342fd952065f9ad3e97179134/data.zip",
+      "bytes": 4324755,
+      "sha256": "1bfe698a677ed6faaebe2ebdc607d913c7e6e5814c91e471a000c21894ec6dd9"
+    },
+    {
+      "dataset": "job_interview",
+      "path": "data/raw/job_interview/README.md",
+      "url": "https://raw.githubusercontent.com/gucci-j/negotiation-breakdown-detection/d4c2bf63b4da95b342fd952065f9ad3e97179134/README.md",
+      "bytes": 2558,
+      "sha256": "b95b22909943ca220f11f8e66b33dd64727808c64909f5f6d8862e5d1748000a"
+    },
+    {
+      "dataset": "job_interview",
+      "path": "data/raw/job_interview/LICENSE",
+      "url": "https://raw.githubusercontent.com/gucci-j/negotiation-breakdown-detection/d4c2bf63b4da95b342fd952065f9ad3e97179134/LICENSE",
+      "bytes": 1107,
+      "sha256": "b1c72068b3d8b1f4dc0a509035aee17848ff129b259d6889a76754512aceb873"
     }
   ]
 }

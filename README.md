@@ -1,6 +1,6 @@
 # Cross-prefix KV reuse dataset pipeline
 
-This repository currently implements pinned downloads and deterministic cross-prefix construction for IBM ArgKP, NVIDIA HelpSteer2, Facebook's Deal or No Deal negotiation corpus, PKU-SafeRLHF, and HarmBench contextual behaviors.
+This repository currently implements pinned downloads and deterministic cross-prefix construction for IBM ArgKP, NVIDIA HelpSteer2, Facebook's Deal or No Deal negotiation corpus, the JobInterview negotiation corpus, PKU-SafeRLHF, and HarmBench contextual behaviors.
 
 ## Quick start
 
@@ -13,6 +13,19 @@ python scripts/validate_datasets.py
 ```
 
 Raw downloads are cached under `data/raw/`. Every file's URL, pinned source revision, size, and SHA-256 digest are recorded in `data/raw/manifest.json`. Existing non-empty files are reused unless `--force` is supplied. Constructed files are stored under `data/processed/`, with five human-checkable examples per dataset in `data/processed/examples/`.
+
+The official JobInterview source repository is also vendored at
+`third_party/negotiation-breakdown-detection`, pinned to
+`d4c2bf63b4da95b342fd952065f9ad3e97179134`. It is retained for the original
+data collection interface, helper classes, and reference utility calculation;
+the reproducible main pipeline reads its pinned `data.zip` through
+`scripts/download_datasets.py`, so the third-party checkout is not required to
+run construction. After cloning this repository, materialize the pinned source
+when needed with:
+
+```bash
+git submodule update --init third_party/negotiation-breakdown-detection
+```
 
 Use `--max-per-dataset 0` to retain all valid examples. Sampling is deterministic for a fixed seed. `data_config.json` documents the default experiment values; command-line flags are authoritative.
 
@@ -151,6 +164,7 @@ All records contain `task_id`, `dataset`, `prefix_a`, `prefix_b`, `shared_block`
 - **ArgKP:** each block has six arguments about one topic. The PRO prefix supplies a pro key point and the CON prefix supplies a con key point. Each target has exactly one positively annotated candidate; same-stance distractors have explicit negative labels. Samples lacking two stances, a unique match, or enough annotated negatives are excluded.
 - **HelpSteer2:** the exact same prompt-response block is scored under two of correctness, helpfulness, coherence, complexity, and verbosity. Prefixes include the official paper's dimension-specific 0–4 anchors. Complexity is a basic-to-expert language spectrum and verbosity is a succinct-to-verbose spectrum; neither is a generic bad-to-good score. All ten rubric pairs are considered. To avoid unstable middle-score calibration, the public per-annotator data is used to retain only pairs where every annotator agrees and the two dimensions have opposite endpoint labels: one is exactly 0 and the other exactly 4. The model therefore chooses only between `0` and `4`; intermediate labels are excluded.
 - **Deal or No Deal:** item counts and both agents' utilities come from the corpus. The block shows the same six feasible allocations in compact `(books, hats, balls)` tuples. Prefixes reveal Agent A's or Agent B's utility function. Candidate sets with tied optima or the same optimum for both agents are rejected. Gold is computed directly from the linear utility functions.
+- **JobInterview:** each block contains 3--6 distinct job-contract offers actually proposed in one completed human negotiation. The worker and recruiter prefixes reveal their respective private, five-issue utility cards (salary, position, weekly holidays, workplace, and company; position may be conditional on company). The official normalized utility function produces each gold choice. We retain only negotiations where both roles have different unique optima and each optimum exceeds its runner-up by at least 0.05 utility, then randomize option positions. The dialogue transcript, accepted-offer marker, and proposer identity are intentionally excluded: the shared contract terms are sufficient and causally relevant evidence for both roles.
 - **PKU-SafeRLHF:** the block contains one user prompt and the same two candidate responses. Prefix A selects only by the dataset's helpfulness preference; prefix B selects only by safety. The high-confidence pool requires `better_response_id != safer_response_id`, exactly one safe response, the safety preference pointing to that response, safe severity 0, unsafe severity at least 2, no harm category on the safe response, and at least one harm category on the unsafe response. Duplicate prompt/response pairs are removed. Response A/B order is deterministically randomized, and the retained pool is stratified across source model, primary harm category, unsafe severity, and displayed helpfulness answer. Only the three official test shards are downloaded (~23 MB), not the full training repository.
 - **HarmBench contextual:** only official test rows with `FunctionalCategory=contextual`, a `context` tag, and a non-empty `ContextString` are retained. The exact `ContextString` is the shared block. Prefix A describes a defensive audit/mitigation purpose that will not operationalize the material; prefix B contains the official harmful `Behavior` and describes applying the material to carry it out. The automatically scored output flips from `BENIGN` to `HARMFUL`. This is an intent-classification task and never asks the evaluated model to generate the harmful behavior. Validation sampling diversifies semantic harm category and context-length band.
 
@@ -161,6 +175,7 @@ These filters establish a machine-checkable change in the correct output. They d
 - ArgKP: official `IBM/KPA_2021_shared_task` repository, pinned in the downloader.
 - HelpSteer2: `nvidia/HelpSteer2`, pinned by Hugging Face revision. `HF_ENDPOINT` can select the official endpoint or a mirror.
 - Deal or No Deal: official `facebookresearch/end-to-end-negotiator` repository, pinned in the downloader.
+- JobInterview: `gucci-j/negotiation-breakdown-detection`, pinned to revision `d4c2bf63b4da95b342fd952065f9ad3e97179134`. License: MIT.
 - PKU-SafeRLHF: official `PKU-Alignment/PKU-SafeRLHF` test shards for Alpaca-7B, Alpaca2-7B, and Alpaca3-8B, pinned to revision `9421ffafec3fa40a1f1a7d567b4d525079477ecb`. License: CC BY-NC 4.0.
 - HarmBench: official `centerforaisafety/HarmBench` text test behavior CSV, pinned to revision `8e1604d1171fe8a48d8febecd22f600e462bdcdd`. License: MIT. The source contains harmful material and is intended only for controlled safety research.
 

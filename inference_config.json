@@ -10,6 +10,7 @@
   "datasets": [
     "argkp",
     "deal_or_no_deal",
+    "job_interview",
     "helpsteer2",
     "pku_safe_rlhf",
     "harmbench_contextual"

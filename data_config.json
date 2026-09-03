@@ -18,5 +18,12 @@
     "functional_category": "contextual",
     "required_tag": "context",
     "task": "benign_vs_harmful_intent_classification"
+  },
+  "job_interview": {
+    "source_split": "completed",
+    "candidate_source": "distinct_actual_solutions",
+    "minimum_candidates": 3,
+    "minimum_unique_optimum_margin": 0.05,
+    "require_opposite_role_optima": true
   }
 }

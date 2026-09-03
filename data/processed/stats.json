@@ -17,6 +17,11 @@
       "written": 1000,
       "sampling": "deterministic_random"
     },
+    "job_interview": {
+      "valid_before_sampling": 273,
+      "written": 273,
+      "sampling": "deterministic_random"
+    },
     "pku_safe_rlhf": {
       "valid_before_sampling": 133,
       "written": 133,

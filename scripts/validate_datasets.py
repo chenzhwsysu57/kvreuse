@@ -64,6 +64,42 @@ def validate_harmbench_record(record: dict[str, object]) -> None:
         raise ValueError("HarmBench context hash mismatch")
 
 
+def validate_job_interview_record(record: dict[str, object]) -> None:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("JobInterview metadata is required")
+    candidates = metadata.get("candidate_offers")
+    worker_scores = metadata.get("worker_scores")
+    recruiter_scores = metadata.get("recruiter_scores")
+    if not isinstance(candidates, list) or not 3 <= len(candidates) <= 8:
+        raise ValueError("JobInterview must contain three to eight candidate contracts")
+    if not isinstance(worker_scores, list) or not isinstance(recruiter_scores, list):
+        raise ValueError("JobInterview utility scores are required")
+    if len(worker_scores) != len(candidates) or len(recruiter_scores) != len(candidates):
+        raise ValueError("JobInterview candidate/score length mismatch")
+    required_terms = {"Salary", "Position", "Weekly holiday", "Workplace", "Company"}
+    if any(not isinstance(offer, dict) or set(offer) != required_terms for offer in candidates):
+        raise ValueError("JobInterview candidate contract has invalid terms")
+    try:
+        worker_values = [float(value) for value in worker_scores]
+        recruiter_values = [float(value) for value in recruiter_scores]
+        margin = float(metadata.get("minimum_margin"))
+    except (TypeError, ValueError):
+        raise ValueError("JobInterview scores and margin must be numeric") from None
+    worker_best = [index for index, value in enumerate(worker_values) if abs(value - max(worker_values)) < 1e-12]
+    recruiter_best = [index for index, value in enumerate(recruiter_values) if abs(value - max(recruiter_values)) < 1e-12]
+    if len(worker_best) != 1 or len(recruiter_best) != 1 or worker_best == recruiter_best:
+        raise ValueError("JobInterview requires distinct unique role optima")
+    if record["gold_a"] != chr(ord("A") + worker_best[0]):
+        raise ValueError("JobInterview worker gold does not select the utility optimum")
+    if record["gold_b"] != chr(ord("A") + recruiter_best[0]):
+        raise ValueError("JobInterview recruiter gold does not select the utility optimum")
+    if max(worker_values) - sorted(worker_values)[-2] + 1e-12 < margin:
+        raise ValueError("JobInterview worker utility margin is below threshold")
+    if max(recruiter_values) - sorted(recruiter_values)[-2] + 1e-12 < margin:
+        raise ValueError("JobInterview recruiter utility margin is below threshold")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("paths", nargs="*", type=Path, default=[Path("data/processed/all.jsonl")])
@@ -80,6 +116,8 @@ def main() -> int:
                         validate_pku_record(record)
                     elif record["dataset"] == "harmbench_contextual":
                         validate_harmbench_record(record)
+                    elif record["dataset"] == "job_interview":
+                        validate_job_interview_record(record)
                 except ValueError as error:
                     raise ValueError(f"{path}:{line_number}: {error}") from error
                 if record["task_id"] in seen:
