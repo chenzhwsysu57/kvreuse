@@ -1,54 +1,41 @@
-"""
-仅用于测试 orchestration 能否跑通。
-真正实验时删掉/替换成你仓库里的 Qwen3 executor。
-"""
-
-from .executor import KVReuseExecutor
-from .schemas import ExecResult
+from .executor import Executor
+from .schemas import ExecutionResult
+from .step_logger import StepLogger
 
 
-class MockExecutor(KVReuseExecutor):
-    def run_full_prefill(
-        self,
-        *,
-        instruction: str,
-        shared_block: str,
-        query: str,
-        expected_answer: str,
-        eval_type: str,
-        eval_metadata: dict,
-    ) -> ExecResult:
-        # 这里只是假结果，不能用于实验。
-        return ExecResult(
-            text=expected_answer,
-            score=1.0,
-            passed=True,
-            metadata={"mock": True},
+class MockExecutor(Executor):
+    def __init__(self, step_logger: StepLogger | None = None):
+        self.step_logger = step_logger
+
+    def _log(self, kind: str, inputs: dict[str, str], result: ExecutionResult) -> None:
+        if self.step_logger is None:
+            return
+        input_text = "\n\n".join(
+            f"===== {name} =====\n{text}" for name, text in inputs.items()
+        )
+        self.step_logger.write(
+            f"executor_{kind}",
+            f"mode: mock\n\n{input_text}\n\n===== MODEL OUTPUT =====\n{result.text}\n",
         )
 
-    def run_kv_reuse(
-        self,
-        *,
-        source_instruction: str,
-        target_instruction: str,
-        shared_block: str,
-        query: str,
-        correction: str,
-        expected_answer: str,
-        eval_type: str,
-        eval_metadata: dict,
-    ) -> ExecResult:
-        # 示例：空 correction 时人为失败；非空时人为成功。
-        if correction.strip():
-            return ExecResult(
-                text=expected_answer,
-                score=1.0,
-                passed=True,
-                metadata={"mock": True},
-            )
-        return ExecResult(
-            text="<mock failure>",
-            score=0.0,
-            passed=False,
-            metadata={"mock": True},
+    def run_full(self, *, prefix, shared_block, question, gold, label):
+        result = ExecutionResult(
+            text=f"Reasoning follows {label}. \\boxed{{A}}",
+            metadata={"label": label, "mock": True},
         )
+        self._log(label, {
+            "prefix": prefix, "shared_block": shared_block,
+            "question": question, "gold": gold,
+        }, result)
+        return result
+
+    def run_reuse(self, *, donor_prefix, target_prefix, shared_block,
+                  question, remedy, gold, label):
+        text = f"Reasoning follows target task. remedy={remedy} \\boxed{{A}}"
+        result = ExecutionResult(text=text, metadata={"label": label, "mock": True})
+        self._log(label, {
+            "donor_prefix": donor_prefix, "target_prefix": target_prefix,
+            "shared_block": shared_block, "question": question,
+            "remedy": remedy, "gold": gold,
+        }, result)
+        return result

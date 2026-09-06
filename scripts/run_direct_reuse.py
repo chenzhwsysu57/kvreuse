@@ -797,6 +797,10 @@ def main() -> int:
                         help="ask for brief visible reasoning (not Qwen3 thinking mode)")
     parser.add_argument("--boxed-output", action="store_true",
                         help="require the final answer inside exactly one \\boxed{...}")
+    parser.add_argument(
+        "--question-prefix", default="",
+        help="insert this text immediately before every question during prompt construction",
+    )
     parser.add_argument("--placeholder-tokens", type=int, default=0,
                         help="append this many fixed placeholder tokens before generation")
     parser.add_argument("--placeholder-text", default="\n",
@@ -860,6 +864,7 @@ def main() -> int:
         "enable_thinking": args.enable_thinking,
         "explicit_reasoning": args.explicit_reasoning,
         "boxed_output": args.boxed_output,
+        "question_prefix": args.question_prefix,
         "placeholder_tokens": args.placeholder_tokens,
         "placeholder_text": args.placeholder_text,
         "newline_position": args.newline_position,
@@ -948,19 +953,26 @@ def main() -> int:
         generation_limit = (
             args.retry_max_new_tokens if record["task_id"] in retry_task_ids else args.max_new_tokens
         )
-        parts = {
-            side: build_prompt_parts(
-                tokenizer,
+        parts = {}
+        for side in ("a", "b"):
+            prompt_record = (
                 with_post_task_restatement(record, side) if post_restatement else
-                with_repeated_target_prefix(record, side) if repeat_prefix_text else record,
-                side,
+                with_repeated_target_prefix(record, side) if repeat_prefix_text else
+                dict(record)
+            )
+            if args.question_prefix:
+                prompt_record["question"] = (
+                    args.question_prefix + "\n\n" + prompt_record["question"]
+                )
+            parts[side] = build_prompt_parts(
+                tokenizer,
+                prompt_record,
+                                     side,
                                      enable_thinking=args.enable_thinking,
                                      explicit_reasoning=args.explicit_reasoning,
                                      boxed_output=args.boxed_output,
                                      newline_position=args.newline_position,
                                      newline_count=args.newline_count)
-            for side in ("a", "b")
-        }
         if not torch.equal(parts["a"].block_ids, parts["b"].block_ids):
             raise ValueError(f"{record['task_id']}: shared block token IDs differ across prefixes")
 

@@ -1,190 +1,181 @@
 import json
-from dataclasses import asdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import List, Optional, Sequence
-
 from .attacker import Attacker
-from .config import SelfPlayConfig
+from .attack_judger import AttackJudger
 from .defender import Defender
-from .executor import KVReuseExecutor
-from .schemas import AttackCase, DefenseCandidate, RoundRecord, VerifiedAttack
+from .defend_judger import DefendJudger
+from .executor import Executor
+from .schemas import AttackRecord, DefenseJudgment, DefenseRecord, RoundRecord
 
 
 class SelfPlayOrchestrator:
-    def __init__(
-        self,
-        *,
-        attacker: Attacker,
-        defender: Defender,
-        executor: KVReuseExecutor,
-        config: SelfPlayConfig,
-        log_dir: Optional[str] = None,
-    ):
+    def __init__(self, *, attacker: Attacker, attack_judger: AttackJudger,
+                 defender: Defender, defend_judger: DefendJudger,
+                 executor: Executor, max_rounds: int = 5,
+                 max_attempts: int = 3,
+                 attacks_per_round: int = 1,
+                 defenses_per_round: int = 1,
+                 attacker_workers: int = 4,
+                 log_dir: str | None = None):
         self.attacker = attacker
+        self.attack_judger = attack_judger
         self.defender = defender
+        self.defend_judger = defend_judger
         self.executor = executor
-        self.config = config
+        self.max_rounds = max_rounds
+        self.max_attempts = max_attempts
+        self.attacks_per_round = max(1, attacks_per_round)
+        self.defenses_per_round = max(1, defenses_per_round)
+        self.attacker_workers = max(1, attacker_workers)
         self.log_dir = Path(log_dir) if log_dir else None
         if self.log_dir:
             self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.attack_pool: list[AttackRecord] = []
+        self.attack_history: list[str] = []
+        self.defense_history: list[str] = []
+        self.defense_pool: list[DefenseRecord] = []
+        self._defense_baselines: dict[str, dict[str, object]] = {}
 
-        self.replay: List[VerifiedAttack] = []
-        self.rounds: List[RoundRecord] = []
+    def run(self, initial_remedy: str = "") -> str:
+        remedy = initial_remedy
+        for round_idx in range(1, self.max_rounds + 1):
+            remedy_before = remedy
+            print(f"[self-play] round {round_idx}/{self.max_rounds}; attacks={len(self.attack_pool)}", flush=True)
+            attack_submissions = []
+            accepted = None
+            pending_attacks = []
+            # Phase 1: collect all attacker proposals first.  Previously each
+            # proposal was executed immediately, making attacks_per_round look
+            # serial in the logs and allowing the first candidate to dominate.
+            attack_history_snapshot = list(self.attack_history)
+            defense_history_snapshot = list(self.defense_history)
 
-    def run(self, initial_correction: str = "") -> str:
-        incumbent = initial_correction
-        incumbent_score = 0.0
-        no_improve_rounds = 0
+            def generate_candidate(candidate_idx: int):
+                errors = []
+                for attempt in range(1, self.max_attempts + 1):
+                    print(f"[self-play] attacker {candidate_idx + 1}/{self.attacks_per_round}; submission {attempt}/{self.max_attempts}", flush=True)
+                    try:
+                        case = self.attacker.propose_one(
+                            attack_history=attack_history_snapshot,
+                            defense_history=defense_history_snapshot,
+                        )
+                        return candidate_idx, (case, attempt, candidate_idx + 1), errors
+                    except Exception as exc:
+                        errors.append((attempt, repr(exc)))
+                return candidate_idx, None, errors
 
-        for round_idx in range(1, self.config.max_rounds + 1):
-            history = self._select_history_for_attacker()
+            worker_count = min(self.attacker_workers, self.attacks_per_round)
+            with ThreadPoolExecutor(max_workers=worker_count) as pool:
+                generated = list(pool.map(generate_candidate, range(self.attacks_per_round)))
+            for candidate_idx, item, errors in generated:
+                for attempt, error in errors:
+                    attack_submissions.append({"candidate": candidate_idx + 1, "attempt": attempt, "error": error})
+                    self._save_error(round_idx, "attacker_generation", {
+                        "candidate": candidate_idx + 1, "attempt": attempt, "error": error,
+                    })
+                if item is not None:
+                    pending_attacks.append(item)
 
-            # 1) attacker proposes candidate attacks
-            attack_proposals = self.attacker.propose(
-                correction=incumbent,
-                history=history,
-                n=self.config.attacks_per_round,
-            )
+            # Phase 2: batch independent full prefills where the backend can do
+            # so, then judge each case separately.
+            cases = [item[0] for item in pending_attacks]
+            try:
+                batched_executions = self.executor.execute_attack_batch(cases, remedy)
+            except Exception as exc:
+                batched_executions = [None] * len(pending_attacks)
+                self._save_error(round_idx, "attacker_batch_executor", {
+                    "cases": len(cases), "error": repr(exc),
+                })
+                print(f"[attacker batch executor error] {exc!r}", flush=True)
+            for (case, attempt, candidate_idx), executions in zip(pending_attacks, batched_executions):
+                try:
+                    if executions is None:
+                        raise RuntimeError("batch executor returned no result for this case")
+                    judgment = self.attack_judger.judge(case, executions)
+                    record = AttackRecord(case, executions, judgment, attempt)
+                    attack_submissions.append(record.to_dict())
+                    print(f"[attack judger] success={judgment.attack_success}: {judgment.summary}", flush=True)
+                    self.attack_history.append(judgment.summary)
+                    if judgment.attack_success:
+                        if accepted is None:
+                            accepted = record
+                        self.attack_pool.append(record)
+                except Exception as exc:
+                    attack_submissions.append({"candidate": candidate_idx, "attempt": attempt, "error": repr(exc)})
+                    self._save_error(round_idx, "attacker_executor", {
+                        "candidate": candidate_idx, "attempt": attempt,
+                        "error": repr(exc),
+                    })
+                    print(f"[attacker/executor error] {exc!r}", flush=True)
 
-            # 2) actual target system verifies attacks
-            verified = [
-                self.executor.verify_attack(
-                    attack,
-                    incumbent,
-                    require_source_clean_success=self.config.require_source_clean_success,
-                    require_target_clean_success=self.config.require_target_clean_success,
-                )
-                for attack in attack_proposals
-            ]
-
-            accepted = [x for x in verified if x.accepted]
-            accepted.sort(key=lambda x: x.failure_strength, reverse=True)
-            accepted = accepted[: self.config.accepted_attacks_per_round]
-
-            self.replay.extend(accepted)
-            self._trim_replay()
-
-            # 如果这一轮没有产生真正 counterexample，仍允许 attacker 下一轮继续尝试；
-            # 但 defender 没有新证据时不更新。
-            if not accepted:
-                record = RoundRecord(
-                    round_idx=round_idx,
-                    incumbent_before=incumbent,
-                    attack_proposals=attack_proposals,
-                    verified_attacks=verified,
-                    defense_candidates=[],
-                    incumbent_after=incumbent,
-                    incumbent_score=incumbent_score,
-                )
-                self.rounds.append(record)
-                self._save_round(record)
-                no_improve_rounds += 1
-                if no_improve_rounds >= self.config.patience:
-                    break
-                continue
-
-            # 3) defender reads recent + representative historical failures
-            defense_failures = self._select_history_for_defender(accepted)
-            defense_candidates = self.defender.propose(
-                incumbent=incumbent,
-                failures=defense_failures,
-                n=self.config.defenses_per_round,
-                max_chars=self.config.max_correction_chars,
-            )
-
-            # 4) empirical scoring on replay buffer
-            candidate_texts = [x.text for x in defense_candidates]
-            if self.config.keep_incumbent:
-                candidate_texts.append(incumbent)
-
-            scored = []
-            replay_attacks = [x.attack for x in self.replay]
-            for text in candidate_texts:
-                mean_score, worst_score = self.executor.score_correction(
-                    text,
-                    replay_attacks,
-                )
-                # 简单 robust objective；后续你可替换成 macro-average + worst-task
-                robust_score = 0.7 * mean_score + 0.3 * worst_score
-                scored.append((robust_score, mean_score, worst_score, text))
-
-            scored.sort(reverse=True, key=lambda x: x[0])
-            best_robust, best_mean, best_worst, best_text = scored[0]
-
-            for c in defense_candidates:
-                for robust, mean_score, worst_score, text in scored:
-                    if c.text == text:
-                        c.score = mean_score
-                        c.worst_case_score = worst_score
+            defense_submissions = []
+            if accepted is not None:
+                for candidate_idx in range(self.defenses_per_round):
+                    for attempt in range(1, self.max_attempts + 1):
+                        print(f"[self-play] defender {candidate_idx + 1}/{self.defenses_per_round}; submission {attempt}/{self.max_attempts}", flush=True)
+                        try:
+                            proposal = self.defender.propose_one(
+                                attack_history=self.attack_history,
+                                defense_history=self.defense_history,
+                            )
+                            evaluations = {}
+                            judgments = {}
+                            for attack in self.attack_pool:
+                                baseline = self._defense_baselines.get(attack.case.case_id)
+                                executed = self.executor.execute_defense(
+                                    attack.case, proposal.remedy,
+                                    without_remedy=baseline,
+                                )
+                                if baseline is None:
+                                    self._defense_baselines[attack.case.case_id] = executed["without_remedy"]
+                                with_remedy = executed["with_remedy"]
+                                without_remedy = executed["without_remedy"]
+                                dj = self.defend_judger.judge(
+                                    attack.case, proposal.remedy,
+                                    {k: v for k, v in without_remedy.items() if k.startswith("reuse_")},
+                                    with_remedy,
+                                )
+                                evaluations.update({
+                                    f"{attack.case.case_id}:{key}": value
+                                    for key, value in with_remedy.items()
+                                })
+                                judgments[attack.case.case_id] = dj.to_dict()
+                                self.defense_history.append(dj.summary)
+                            success = bool(judgments) and all(x["defense_success"] for x in judgments.values())
+                            summary = " ; ".join(x["summary"] for x in judgments.values())
+                            record = DefenseRecord(proposal, evaluations, DefenseJudgment(summary, success, details=judgments), attempt)
+                            defense_submissions.append(record.to_dict())
+                            print(f"[defend judger] success={success}: {summary}", flush=True)
+                            if success:
+                                remedy = proposal.remedy
+                                self.defense_pool.append(record)
+                                break
+                        except Exception as exc:
+                            defense_submissions.append({"candidate": candidate_idx + 1, "attempt": attempt, "error": repr(exc)})
+                            self._save_error(round_idx, "defender_executor", {
+                                "candidate": candidate_idx + 1, "attempt": attempt,
+                                "error": repr(exc),
+                            })
+                            print(f"[defender/executor error] {exc!r}", flush=True)
+                    if remedy != remedy_before:
                         break
 
-            improved = best_robust > incumbent_score + self.config.min_improvement
-            before = incumbent
-
-            if improved:
-                incumbent = best_text
-                incumbent_score = best_robust
-                no_improve_rounds = 0
-            else:
-                no_improve_rounds += 1
-
-            record = RoundRecord(
-                round_idx=round_idx,
-                incumbent_before=before,
-                attack_proposals=attack_proposals,
-                verified_attacks=verified,
-                defense_candidates=defense_candidates,
-                incumbent_after=incumbent,
-                incumbent_score=incumbent_score,
-            )
-            self.rounds.append(record)
+            record = RoundRecord(round_idx, remedy_before, attack_submissions,
+                                 accepted.to_dict() if accepted else None,
+                                 defense_submissions, remedy)
             self._save_round(record)
-
-            if no_improve_rounds >= self.config.patience:
-                break
-
-        return incumbent
-
-    def _select_history_for_attacker(self) -> List[VerifiedAttack]:
-        accepted = [x for x in self.replay if x.accepted]
-        accepted.sort(key=lambda x: x.failure_strength, reverse=True)
-        return accepted[: self.config.max_history_for_attacker]
-
-    def _select_history_for_defender(
-        self,
-        recent: Sequence[VerifiedAttack],
-    ) -> List[VerifiedAttack]:
-        result = list(recent)
-        recent_ids = {x.attack.attack_id for x in recent}
-
-        historical = [
-            x for x in self.replay
-            if x.accepted and x.attack.attack_id not in recent_ids
-        ]
-        historical.sort(key=lambda x: x.failure_strength, reverse=True)
-
-        room = max(0, self.config.max_history_for_defender - len(result))
-        result.extend(historical[:room])
-        return result[: self.config.max_history_for_defender]
-
-    def _trim_replay(self):
-        if len(self.replay) <= self.config.max_replay_cases:
-            return
-        self.replay.sort(key=lambda x: x.failure_strength, reverse=True)
-        self.replay = self.replay[: self.config.max_replay_cases]
+        return remedy
 
     def _save_round(self, record: RoundRecord):
+        if self.log_dir:
+            path = self.log_dir / f"round_{record.round_idx:02d}.json"
+            path.write_text(json.dumps(record.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _save_error(self, round_idx: int, stage: str, details: dict):
+        """Persist errors; terminal output alone is insufficient for long runs."""
         if not self.log_dir:
             return
-
-        payload = {
-            "round_idx": record.round_idx,
-            "incumbent_before": record.incumbent_before,
-            "attack_proposals": [x.to_dict() for x in record.attack_proposals],
-            "verified_attacks": [x.to_dict() for x in record.verified_attacks],
-            "defense_candidates": [x.to_dict() for x in record.defense_candidates],
-            "incumbent_after": record.incumbent_after,
-            "incumbent_score": record.incumbent_score,
-        }
-        path = self.log_dir / f"round_{record.round_idx:02d}.json"
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        with (self.log_dir / "errors.jsonl").open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"round": round_idx, "stage": stage, **details},
+                                    ensure_ascii=False) + "\n")

@@ -5,6 +5,8 @@ __pycache__/
 .vscode/
 .agents/
 .codex
+.env.local
+selfplay_logs/
 
 # Historical experiments and generated evaluation results
 legacy/

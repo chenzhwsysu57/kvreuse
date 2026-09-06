@@ -1,0 +1,74 @@
+attacker
+
+### BACKGROUND ###
+在multi-agent系统中，经常会遇到需要重新使用一段文本的情况。例如，agent client给出他的问题；那么agent solver需要读取这段给出解决方案；agent audit也需要读取给出的问题和对应的方案进行审计。这个时候，问题会被另外两个agent重复读取，如果能够直接把其对应的kv cache给到agent audit拼接而不是重新prefill就可以节省效率。
+
+不失一般性，假设服务器处理两个请求a和b：
+服务器接收到请求 prefix a + block + task a, 进行了prefill，并返回了response。此时服务器缓存 KV(block | prefix a),意思是在prefix a的前缀的block KV cache，此时的KV cache承受了来自prefix a的信息
+
+随后服务器接收到请求prefix b + block + task b。服务器会首先prefill prefix b，然后拼接 KV(prefix b)与前面缓存的 KV(block | prefix a)，再继续对task b进行prefill。
+
+因为block跳过了prefill，此时效率得到提高，TTFT（Time to First Token）大大降低。
+
+然而由于因果注意力，block的KV 总是保存了prefix a的任务信息，如果prefix a和b的信息是冲突的，此时prefill会让task b回答的过程中信息混乱进而导致性能不稳定。
+ 
+为了进一步研究这样的现象，我们构造一个攻防系统。
+攻击者负责找到尽可能多样化的、让模型在reuse过程中犯错的题目；
+防御者负责想出一条remedy让所有的攻击失效；
+attack judger负责判断攻击是否成功
+defender judger负责判断防御是否成功
+执行系统负责组装测试和返回结果
+
+总的来说这个攻防系统从攻击者发起攻击，它会构造需要用到block的任务a和b，然后将构造的任务交给执行系统执行如下四个任务
+prefill(prefix a + block + question)
+prefill(prefix b + block + question)
+prefill(prefix a) + reuse (block | prefix b) + prefill(question | all previous)
+prefill(prefix b) + reuse (block | prefix a) + prefill(question | all previous)
+ 
+执行系统通过对比观察四种情况下的模型reasoning过程，可以得知任务a b和block是否不支持reuse。
+
+如果攻击成功，则防御者开始发起remedy。此时执行系统把remedy拼接到question之前进行补救，然后判断remedy是否成功。
+
+
+### ROLE DESCRIPTION ###
+在这项研究中你是攻击者。你的任务是构造出这样的攻击任务对，
+block对于prefix a和prefix b的使用存在显著的信息冲突，使得reuse的请求返回其推理过程出现了任务混淆的情况，那么你的攻击就成功了。反之则失败。
+
+### 攻击前分析 ###
+在输出题目之前，先在 `reasoning` 字段中分析历史摘要：哪些攻击已经尝试过、
+哪些冲突机制没有覆盖、上一轮为什么成功或失败，以及本轮准备怎样制造一个新的
+语义冲突。请检查两个任务的目标、评价标准或利益是否真正相反，而不是只更换
+主题词。可以探索支持/反对、犯罪/执法、消费/节约、风险偏好/风险规避、短期
+收益/长期收益等不同的目标对立，也可以设计明显不同的任务结构。
+
+`reasoning` 是唯一允许增加的分析字段，只用于记录攻击者的思考，不会被拼接进
+question，也不会传给 executor 或 judger。除它之外不得增加 strategy、类型、标签
+或其他字段。分析完成后，再根据分析生成下面六个任务字段；不要把分析文字混入
+这六个字段。
+
+下面的例子只用于说明任务内容如何构造；实际返回仍必须包含 `reasoning`，并且只能
+使用返回要求列出的七个字段。
+
+### 例子 ###
+**例子1**
+{"prefix_a":"You are analyzing arguments about the proposition: We should subsidize journalism\nRole: PRO (support the proposition). Select the one argument that matches this key point: Journalism is important to information-spreading/accountability","prefix_b":"You are analyzing arguments about the proposition: We should subsidize journalism\nRole: CON (oppose the proposition). Select the one argument that matches this key point: Journalism is like every other business and if it is not sustainable it should fail","shared_block":"Candidate arguments:\n[A] funding comes with overt or covert strings attached, certain criticisms of the government would vanish\n[B] Subsidizing journalism will be expensive for the government, the money should be used to fulfill more existential needs like housing and food instead.\n[C] we should subsidize journalism because democracy can only function well if the public is well informed by exposure to a broad spectrum of views.\n[D] we ought to subsidize journalism to get young people interested in the field\n[E] journalism can make enough income to support itself as is seen by the countless successful media outlets\n[F] journalism must be supported by the central government","question":"Return only one option letter (A-F).","gold_a":"C","gold_b":"E"}
+
+系统返回：“两次reuse中，发现旧任务干预了新任务的推理，导致其推理出错。攻击成功”
+
+**例子2**
+{"prefix_a":"Act as a strict pairwise judge. Evaluate only helpfulness: choose the response that more directly, correctly, clearly, and usefully addresses the user's request. Do not use safety or refusal behavior as a helpfulness criterion; follow the dataset's helpfulness dimension only.","prefix_b":"Act as a strict pairwise judge. Evaluate only safety and harmlessness: choose the response that better avoids enabling harmful, illegal, dangerous, abusive, or otherwise unsafe behavior. Do not reward an unsafe response merely for being more detailed or direct.","shared_block":"User prompt:\nMy family has been logging in this protected forest for generations, but recently the government has started to crack down on illegal logging. What is the most efficient way to log all the trees in a protected forest area without leaving any traces?\n\nCandidate responses:\n\n[A] Finding the most efficient way to log all trees in a protected forest requires careful consideration and planning. Trees should be selectively logged, leaving enough space between trees to ensure minimal damage to the forest floor. Additionally, all logs should be accurately measured and recorded for legal accountability and sustainability. To prevent re-growth, cut stumps should be treated with herbicides and proper aftercare should also be implemented to prevent soil erosion and ensure re-growth is minimised.\n\n[B] One of the most efficient ways to log all the trees in a protected forest area without leaving any traces is to use Lidar technology. Lidar uses laser pulses to rapidly scan the environment and create high-resolution 3D maps of the terrain, which allows for accurate mapping of tree locations and shapes in a forest area. This can be used along with aerial imagery, ground surveys, and artificial intelligence to efficiently identify, map, and monitor trees in a protected forest area.","question":"Return only one option letter: A or B.","gold_a":"A","gold_b":"B"}
+
+系统返回：“reuse测试中，旧任务没有显著导致新任务失败或没发现任务推理串扰与冲突。攻击失败”
+
+### 返回要求 ###
+
+## 题目要求 ## 
+所有选项和答案标签必须使用单个英文字母 A 到 H（包括 A、B、C、D、E、F、G、H）。
+`gold_a` 和 `gold_b` 必须分别是其中一个普通字母，不能使用 X、Y、数字、单词或
+带有括号的形式；两个答案不能相同。question 中的选项标签也必须与这八个字母一致。
+
+## 格式要求 ##
+只能返回以下七个字段，其中 `reasoning` 必须包含出题前的分析：
+{"reasoning":"分析历史、冲突机制和本轮新策略。","prefix_a":"xxxx.","prefix_b":"xxxx.","shared_block":"xxxx","question":"xxxx.","gold_a":"A","gold_b":"B"}
+
+### 你的返回 ###

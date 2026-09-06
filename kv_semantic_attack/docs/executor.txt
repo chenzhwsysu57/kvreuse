@@ -1,0 +1,20 @@
+执行系统
+
+
+对于攻击者的输入，
+根据传入的prefix a, b, block, question进行
+prefill(prefix a + block + question)
+prefill(prefix b + block + question)
+prefill(prefix a) + reuse (block | prefix b) + prefill(question | all previous)
+prefill(prefix b) + reuse (block | prefix a) + prefill(question | all previous)
+ 
+四种测试，然后返回结果。可以通过参数控制reasoning是否开启（默认开始）
+
+
+对于防御者的输入，
+只需要将额外的remedy字段加入到question之前，测试reuse即可：
+
+prefill(prefix a) + reuse (block | prefix b) + prefill( remedy + question | all previous)
+prefill(prefix b) + reuse (block | prefix a) + prefill( remedy + question | all previous)
+
+然而，你应该维护一个攻击/防御的内容池。防御者每次的remedy都需要经过所有的历史攻击案例而不仅仅是本轮的攻击案例
