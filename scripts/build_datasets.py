@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import gzip
 import hashlib
@@ -54,6 +55,13 @@ LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 JOB_INTERVIEW_ISSUES = ("Salary", "Position", "Weekly holiday", "Workplace", "Company")
 JOB_INTERVIEW_MIN_CANDIDATES = 3
 JOB_INTERVIEW_MIN_MARGIN = 0.05
+EXPLORE_TOM_PREFIX_A = (
+    "Answer the ground-truth question about the object's current location in the story."
+)
+EXPLORE_TOM_PREFIX_B = (
+    "Answer where the specified agent will search, based only on that agent's beliefs "
+    "in the story."
+)
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -724,6 +732,118 @@ def build_fantom_access(raw: Path, seed: int) -> list[dict[str, Any]]:
     return records
 
 
+
+def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    with path.open(encoding="utf-8") as handle:
+        return [json.loads(line) for line in handle if line.strip()]
+
+def parse_explore_tom_params(value: Any) -> tuple[Any, ...] | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = ast.literal_eval(value)
+    except (SyntaxError, ValueError):
+        return None
+    if isinstance(parsed, tuple) and len(parsed) >= 3:
+        return parsed
+    return None
+
+
+def explore_tom_agent_label(params: tuple[Any, ...]) -> str:
+    subject = params[0]
+    if isinstance(subject, list) and subject:
+        return str(subject[0])
+    if isinstance(subject, str) and subject:
+        return subject
+    return "the agent"
+
+
+def build_explore_tom(raw: Path, seed: int) -> list[dict[str, Any]]:
+    """Build ground-truth vs false-belief search conflicts from ExploreToM."""
+    path = raw / "explore_tom" / "train.jsonl"
+    if not path.is_file():
+        raise FileNotFoundError(f"missing {path}")
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row_index, row in enumerate(load_jsonl(path)):
+        story_key = str(row.get("story_structure", "")).strip()
+        if not story_key:
+            continue
+        grouped[story_key].append({**row, "source_row": row_index})
+
+    records: list[dict[str, Any]] = []
+    for story_index, story_key in enumerate(sorted(grouped)):
+        rows = grouped[story_key]
+        ground_truth: dict[str, dict[str, Any]] = {}
+        beliefs: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in rows:
+            params = parse_explore_tom_params(row.get("qprop=params"))
+            if params is None:
+                continue
+            obj = str(params[1])
+            qtype = str(params[2])
+            if qtype.startswith("ground_truth") and "container_location" in qtype:
+                ground_truth[obj] = row
+            elif "container_location" in qtype and row.get("qprop=nth_order") == 1:
+                agent = explore_tom_agent_label(params)
+                beliefs[(agent, obj)] = row
+
+        candidates: list[tuple[dict[str, Any], dict[str, Any], str, str]] = []
+        for obj, gt_row in ground_truth.items():
+            for (agent, belief_obj), belief_row in beliefs.items():
+                if belief_obj != obj:
+                    continue
+                if belief_row["expected_answer"] == gt_row["expected_answer"]:
+                    continue
+                candidates.append((gt_row, belief_row, obj, agent))
+        if not candidates:
+            continue
+        gt_row, belief_row, obj, agent = candidates[
+            stable_rng(seed, f"explore-tom-scenario:{story_index}").randrange(len(candidates))
+        ]
+        story = str(gt_row.get("infilled_story", "")).strip()
+        if not story:
+            continue
+        gt_answer = str(gt_row["expected_answer"]).strip()
+        belief_answer = str(belief_row["expected_answer"]).strip()
+        options = [gt_answer, belief_answer]
+        order = [0, 1]
+        stable_rng(seed, f"explore-tom-order:{story_index}:{obj}").shuffle(order)
+        displayed = [options[index] for index in order]
+        candidate_block = "Candidate containers:\n" + "\n".join(
+            f"[{LETTERS[index]}] {value}" for index, value in enumerate(displayed)
+        )
+        records.append({
+            "task_id": f"explore-tom-story-{story_index}-obj-{obj.replace(' ', '-')}",
+            "dataset": "explore_tom",
+            "prefix_a": EXPLORE_TOM_PREFIX_A,
+            "prefix_b": EXPLORE_TOM_PREFIX_B + f"\nTarget agent: {agent}.",
+            "shared_block": "Story:\n" + story + f"\n\nObject of interest: {obj}",
+            "question": (
+                "Which candidate container answers the current task? Return only one option letter: A or B.\n\n"
+                + candidate_block
+            ),
+            "gold_a": LETTERS[order.index(0)],
+            "gold_b": LETTERS[order.index(1)],
+            "metric": "exact_match",
+            "metadata": {
+                "split": "train",
+                "source_row_gt": gt_row["source_row"],
+                "source_row_belief": belief_row["source_row"],
+                "object": obj,
+                "target_agent": agent,
+                "ground_truth_answer": gt_answer,
+                "belief_answer": belief_answer,
+                "ground_truth_question": str(gt_row.get("question", "")),
+                "belief_question": str(belief_row.get("question", "")),
+                "belief_nth_order": belief_row.get("qprop=nth_order"),
+                "belief_question_type": str(parse_explore_tom_params(belief_row.get("qprop=params"))[2]),
+                "candidate_order": order,
+                "scenario": "ground_truth_location_vs_first_order_agent_search_belief",
+            },
+        })
+    return records
+
+
 def load_perspectrum_pools(raw: Path) -> tuple[list[dict[str, Any]], dict[int, str], dict[int, str]]:
     base = raw / "perspectrum"
     claims = json.loads((base / "perspectrum_with_answers_v1.0.json").read_text(encoding="utf-8"))
@@ -1016,6 +1136,7 @@ def main() -> int:
         "fantom",
         "fantom_access",
         "job_interview",
+        "explore_tom",
         "perspectrum",
         "pku_safe_rlhf",
         "harmbench_contextual",
@@ -1033,6 +1154,7 @@ def main() -> int:
         "fantom": lambda: build_fantom(args.raw_dir, args.seed),
         "fantom_access": lambda: build_fantom_access(args.raw_dir, args.seed),
         "job_interview": lambda: build_job_interview(args.raw_dir, args.seed),
+        "explore_tom": lambda: build_explore_tom(args.raw_dir, args.seed),
         "perspectrum": lambda: build_perspectrum(args.raw_dir, args.seed),
         "pku_safe_rlhf": lambda: build_pku_safe_rlhf(args.raw_dir, args.seed),
         "harmbench_contextual": lambda: build_harmbench_contextual(args.raw_dir),

@@ -1,0 +1,63 @@
+{
+  "name": "kvreuse_benchmark_44_v1",
+  "input": "data/processed/all.jsonl",
+  "input_sha256": "6b24afb3e0e4b15644af0d9f1f0533d652a24be972e1a812b46f3cc1939865fa",
+  "output": "data/benchmark/benchmark_explore_tom_44.jsonl",
+  "output_sha256": "4ed7c6aee624265b26803bd72f2a4f56e61a2e9c8d4d8dc1ec1b83fa2735fdba",
+  "seed": 20260831,
+  "requested_quotas": {
+    "explore_tom": 44
+  },
+  "quotas": {
+    "explore_tom": 44
+  },
+  "counts": {
+    "explore_tom": 44
+  },
+  "task_ids": [
+    "explore-tom-story-309-obj-small-notebook",
+    "explore-tom-story-75-obj-tactical-flashlight",
+    "explore-tom-story-27-obj-small-bag-of-dog-treats",
+    "explore-tom-story-146-obj-walkie-talkie",
+    "explore-tom-story-46-obj-stethoscope",
+    "explore-tom-story-401-obj-portable-speaker",
+    "explore-tom-story-506-obj-walkie-talkie",
+    "explore-tom-story-581-obj-collectible-figurine",
+    "explore-tom-story-501-obj-stuffed-rabbit",
+    "explore-tom-story-495-obj-compass",
+    "explore-tom-story-270-obj-tactical-flashlight",
+    "explore-tom-story-446-obj-collectible-figurine",
+    "explore-tom-story-333-obj-pocket-sized-notebook",
+    "explore-tom-story-559-obj-pocket-sized-notebook",
+    "explore-tom-story-200-obj-harmonica",
+    "explore-tom-story-243-obj-paintbrush",
+    "explore-tom-story-122-obj-bookmark",
+    "explore-tom-story-608-obj-pocket-sized-calculator",
+    "explore-tom-story-463-obj-harmonica",
+    "explore-tom-story-91-obj-compass",
+    "explore-tom-story-339-obj-tactical-flashlight",
+    "explore-tom-story-190-obj-pocket-watch",
+    "explore-tom-story-555-obj-harmonica",
+    "explore-tom-story-176-obj-stuffed-rabbit",
+    "explore-tom-story-577-obj-collectible-miniature-figure",
+    "explore-tom-story-353-obj-small,-leather-bound-notebook",
+    "explore-tom-story-466-obj-harmonica",
+    "explore-tom-story-101-obj-stuffed-rabbit",
+    "explore-tom-story-185-obj-silver-letter-opener",
+    "explore-tom-story-194-obj-harmonica",
+    "explore-tom-story-302-obj-lantern",
+    "explore-tom-story-97-obj-stuffed-rabbit",
+    "explore-tom-story-423-obj-small-bag-of-dog-treats",
+    "explore-tom-story-591-obj-harmonica",
+    "explore-tom-story-494-obj-silver-letter-opener",
+    "explore-tom-story-382-obj-waterproof-flashlight",
+    "explore-tom-story-371-obj-pocket-sized-calculator",
+    "explore-tom-story-153-obj-walkie-talkie",
+    "explore-tom-story-279-obj-stethoscope",
+    "explore-tom-story-213-obj-small,-antique-pocket-watch",
+    "explore-tom-story-263-obj-walkie-talkie",
+    "explore-tom-story-228-obj-small-bag-of-dog-treats",
+    "explore-tom-story-457-obj-waterproof-flashlight",
+    "explore-tom-story-138-obj-silver-locket"
+  ]
+}

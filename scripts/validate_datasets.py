@@ -173,6 +173,38 @@ def validate_perspectrum_record(record: dict[str, object]) -> None:
         raise ValueError("Perspectrum candidates must appear after the question")
 
 
+def validate_explore_tom_record(record: dict[str, object]) -> None:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("ExploreToM metadata is required")
+    order = metadata.get("candidate_order")
+    gt = metadata.get("ground_truth_answer")
+    belief = metadata.get("belief_answer")
+    if not isinstance(order, list) or sorted(order) != [0, 1]:
+        raise ValueError("ExploreToM candidate order is invalid")
+    if not isinstance(gt, str) or not gt or not isinstance(belief, str) or not belief or gt == belief:
+        raise ValueError("ExploreToM requires distinct ground-truth and belief answers")
+    if metadata.get("belief_nth_order") != 1:
+        raise ValueError("ExploreToM must use a first-order belief question")
+    if metadata.get("scenario") != "ground_truth_location_vs_first_order_agent_search_belief":
+        raise ValueError("ExploreToM scenario must contrast ground truth with a first-order belief")
+    if record["gold_a"] != chr(ord("A") + order.index(0)):
+        raise ValueError("ExploreToM ground-truth gold is invalid")
+    if record["gold_b"] != chr(ord("A") + order.index(1)):
+        raise ValueError("ExploreToM belief gold is invalid")
+    shared = str(record["shared_block"])
+    if not shared.startswith("Story:\n") or "\n\nObject of interest: " not in shared:
+        raise ValueError("ExploreToM shared context markers are missing")
+    if "Candidate containers:\n" in shared:
+        raise ValueError("ExploreToM candidates must not be part of the reusable shared context")
+    question = str(record["question"])
+    if not question.startswith(
+        "Which candidate container answers the current task? Return only one option letter: A or B.\n\n"
+        "Candidate containers:\n"
+    ):
+        raise ValueError("ExploreToM candidates must appear after the question")
+
+
 def validate_fantom_access_record(record: dict[str, object]) -> None:
     metadata = record.get("metadata")
     if not isinstance(metadata, dict):
@@ -220,6 +252,8 @@ def main() -> int:
                         validate_fantom_record(record)
                     elif record["dataset"] == "fantom_access":
                         validate_fantom_access_record(record)
+                    elif record["dataset"] == "explore_tom":
+                        validate_explore_tom_record(record)
                     elif record["dataset"] == "perspectrum":
                         validate_perspectrum_record(record)
                 except ValueError as error:
