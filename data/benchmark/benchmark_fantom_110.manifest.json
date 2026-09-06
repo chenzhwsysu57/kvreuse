@@ -1,9 +1,9 @@
 {
   "name": "kvreuse_benchmark_110_v1",
   "input": "data/processed/all.jsonl",
-  "input_sha256": "46fb71f624fcaae2138f9b6f1fea7921936c84aa231d1e2923cbdd3d1e17c702",
+  "input_sha256": "5015f31060e3ec4db565b06c8dad9cf95d602463eed88e359d0f2738373867e2",
   "output": "data/benchmark/benchmark_fantom_110.jsonl",
-  "output_sha256": "fb8eca42a358b3f770daeaaa18c1d91cb50735eb7a33f433ccaceed30ddca0e9",
+  "output_sha256": "5049a199a3c02f6d98faaf59f49d71e52dc3457d58cb1e0c12126b9e06495e65",
   "seed": 20260831,
   "requested_quotas": {
     "fantom": 110

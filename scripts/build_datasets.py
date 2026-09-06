@@ -595,25 +595,28 @@ def build_fantom(raw: Path, seed: int) -> list[dict[str, Any]]:
         order = [0, 1]
         stable_rng(seed, f"fantom-order:{conversation_id}:{selected['set_id']}").shuffle(order)
         displayed_statements = [statements[index] for index in order]
+        candidate_block = "Candidate belief accounts:\n" + "\n".join(
+            f"[{LETTERS[index]}] {statement}" for index, statement in enumerate(displayed_statements)
+        )
         records.append({
             "task_id": f"fantom-conv-{conversation_id}-set-{selected['set_id']}",
             "dataset": "fantom",
             "prefix_a": (
-                f"Assess the belief held by {selected['joining_speaker']}. This person joined only after the "
-                "relevant exchange, so do not attribute information they did not observe."
+                f"Assess the belief held by {selected['joining_speaker']}. Please recognize when "
+                f"{selected['joining_speaker']} enters the conversation and when {selected['joining_speaker']} leaves."
             ),
             "prefix_b": (
-                f"Assess the belief held by {selected['witness']}. This person observed the relevant exchange "
-                "and therefore has access to the full fact."
+                f"Assess the belief held by {selected['witness']}. Please recognize when "
+                f"{selected['witness']} enters the conversation and when {selected['witness']} leaves."
             ),
             "shared_block": (
                 "Conversation:\n" + selected["full_context"] + "\n\n"
-                "Relevant missed information:\n" + selected["missed_info"] + "\n\n"
-                "Candidate belief accounts:\n" + "\n".join(
-                    f"[{LETTERS[index]}] {statement}" for index, statement in enumerate(displayed_statements)
-                )
+                "Relevant missed information:\n" + selected["missed_info"]
             ),
-            "question": "Which account best represents the target person's belief? Return only one option letter: A or B.",
+            "question": (
+                "Which account best represents the target person's belief? Return only one option letter: A or B.\n\n"
+                + candidate_block
+            ),
             "gold_a": LETTERS[order.index(1)],
             "gold_b": LETTERS[order.index(0)],
             "metric": "exact_match",

@@ -128,6 +128,18 @@ def validate_fantom_record(record: dict[str, object]) -> None:
     shared = str(record["shared_block"])
     if not shared.startswith("Conversation:\n") or "\n\nRelevant missed information:\n" not in shared:
         raise ValueError("FANToM shared context markers are missing")
+    if "Candidate belief accounts:\n" in shared:
+        raise ValueError("FANToM candidates must not be part of the reusable shared context")
+    question = str(record["question"])
+    prompt = "Which account best represents the target person's belief? Return only one option letter: A or B."
+    if not question.startswith(prompt + "\n\nCandidate belief accounts:\n"):
+        raise ValueError("FANToM candidates must appear after the question")
+    expected_prefixes = {
+        f"Assess the belief held by {joining}. Please recognize when {joining} enters the conversation and when {joining} leaves.",
+        f"Assess the belief held by {witness}. Please recognize when {witness} enters the conversation and when {witness} leaves.",
+    }
+    if {record["prefix_a"], record["prefix_b"]} != expected_prefixes:
+        raise ValueError("FANToM prefixes must use the neutral conversation-timing instruction")
 
 
 def validate_fantom_access_record(record: dict[str, object]) -> None:
