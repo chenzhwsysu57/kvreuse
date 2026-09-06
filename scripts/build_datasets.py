@@ -724,6 +724,119 @@ def build_fantom_access(raw: Path, seed: int) -> list[dict[str, Any]]:
     return records
 
 
+def load_perspectrum_pools(raw: Path) -> tuple[list[dict[str, Any]], dict[int, str], dict[int, str]]:
+    base = raw / "perspectrum"
+    claims = json.loads((base / "perspectrum_with_answers_v1.0.json").read_text(encoding="utf-8"))
+    perspectives = {
+        row["pId"]: row["text"]
+        for row in json.loads((base / "perspective_pool_v1.0.json").read_text(encoding="utf-8"))
+    }
+    evidence = {
+        row["eId"]: row["text"]
+        for row in json.loads((base / "evidence_pool_v1.0.json").read_text(encoding="utf-8"))
+    }
+    return claims, perspectives, evidence
+
+
+def build_perspectrum(raw: Path, seed: int) -> list[dict[str, Any]]:
+    """Build unique support-vs-undermine stance choices from official labels."""
+    claims, perspectives, evidence = load_perspectrum_pools(raw)
+    records: list[dict[str, Any]] = []
+    for claim in claims:
+        claim_id = str(claim.get("cId", ""))
+        claim_text = str(claim.get("text", "")).strip()
+        if not claim_id or not claim_text:
+            continue
+        rng = stable_rng(seed, f"perspectrum:{claim_id}")
+        stance_candidates: dict[str, list[tuple[dict[str, Any], int, str]]] = {
+            "support": [],
+            "undermine": [],
+        }
+        for cluster in claim.get("perspectives", []):
+            if not isinstance(cluster, dict):
+                continue
+            stance = str(cluster.get("stance_label_3", "")).lower()
+            if stance not in stance_candidates:
+                continue
+            pids = cluster.get("pids", [])
+            if not isinstance(pids, list):
+                continue
+            available = [
+                (pid, perspectives.get(pid, "").strip())
+                for pid in pids
+                if isinstance(pid, int) and perspectives.get(pid, "").strip()
+            ]
+            if available:
+                pid, text = rng.choice(available)
+                stance_candidates[stance].append((cluster, pid, text))
+        pairs = [
+            (support, undermine)
+            for support in stance_candidates["support"]
+            for undermine in stance_candidates["undermine"]
+            if support[2].casefold() != undermine[2].casefold()
+        ]
+        if not pairs:
+            continue
+        support, undermine = rng.choice(pairs)
+        candidates = [("support", *support), ("undermine", *undermine)]
+        order = [0, 1]
+        rng.shuffle(order)
+        displayed = [candidates[index] for index in order]
+        evidence_ids: list[int] = []
+        for cluster in claim.get("perspectives", []):
+            if isinstance(cluster, dict):
+                for eid in cluster.get("evidence", []):
+                    if isinstance(eid, int) and eid not in evidence_ids:
+                        evidence_ids.append(eid)
+        evidence_ids.sort()
+        evidence_lines: list[str] = []
+        for eid in evidence_ids[:6]:
+            text = evidence.get(eid, "").strip()
+            if text:
+                evidence_lines.append(f"- {text}")
+        option_lines = [
+            f"[{LETTERS[index]}] {text}"
+            for index, (_, _, _, text) in enumerate(displayed)
+        ]
+        gold_support_letter = LETTERS[order.index(0)]
+        gold_undermine_letter = LETTERS[order.index(1)]
+        context_sections = ["Claim:\n" + claim_text]
+        if evidence_lines:
+            context_sections.append("Relevant evidence from multiple perspectives:\n" + "\n".join(evidence_lines))
+        records.append({
+            "task_id": f"perspectrum-claim-{claim_id}",
+            "dataset": "perspectrum",
+            "prefix_a": "Select the candidate perspective that supports the claim.",
+            "prefix_b": "Select the candidate perspective that undermines the claim.",
+            "shared_block": "\n\n".join(context_sections),
+            "question": (
+                "Which candidate has the stance required by the task? Return only one option letter: A or B.\n\n"
+                "Candidate perspectives:\n" + "\n".join(option_lines)
+            ),
+            "gold_a": gold_support_letter,
+            "gold_b": gold_undermine_letter,
+            "metric": "exact_match",
+            "metadata": {
+                "source_claim_id": claim_id,
+                "construction": "one_official_support_vs_one_official_undermine",
+                "support_cluster_pids": support[0]["pids"],
+                "undermine_cluster_pids": undermine[0]["pids"],
+                "support_display_pid": support[1],
+                "undermine_display_pid": undermine[1],
+                "support_stance_label_3": support[0].get("stance_label_3"),
+                "undermine_stance_label_3": undermine[0].get("stance_label_3"),
+                "support_stance_label_5": support[0].get("stance_label_5"),
+                "undermine_stance_label_5": undermine[0].get("stance_label_5"),
+                "support_voter_counts": support[0].get("voter_counts"),
+                "undermine_voter_counts": undermine[0].get("voter_counts"),
+                "candidate_order": order,
+                "candidate_stances": [stance for stance, _, _, _ in displayed],
+                "evidence_ids": evidence_ids[:6],
+            },
+        })
+    return records
+
+
 def build_harmbench_contextual(raw: Path) -> list[dict[str, Any]]:
     """Construct benign-vs-operational intent classification over shared contexts."""
     path = raw / "harmbench_contextual" / "harmbench_behaviors_text_test.csv"
@@ -903,6 +1016,7 @@ def main() -> int:
         "fantom",
         "fantom_access",
         "job_interview",
+        "perspectrum",
         "pku_safe_rlhf",
         "harmbench_contextual",
     )
@@ -919,6 +1033,7 @@ def main() -> int:
         "fantom": lambda: build_fantom(args.raw_dir, args.seed),
         "fantom_access": lambda: build_fantom_access(args.raw_dir, args.seed),
         "job_interview": lambda: build_job_interview(args.raw_dir, args.seed),
+        "perspectrum": lambda: build_perspectrum(args.raw_dir, args.seed),
         "pku_safe_rlhf": lambda: build_pku_safe_rlhf(args.raw_dir, args.seed),
         "harmbench_contextual": lambda: build_harmbench_contextual(args.raw_dir),
     }

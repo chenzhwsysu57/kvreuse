@@ -40,5 +40,12 @@
     "task": "direct_information_access_yes_no",
     "deduplication": "one_inaccessible_access_scenario_per_source_conversation",
     "require_opposite_information_access": true
+  },
+  "perspectrum": {
+    "source_revision": "master",
+    "scenario": "one_official_support_vs_one_official_undermine",
+    "stance_labels": ["SUPPORT", "UNDERMINE"],
+    "one_record_per_claim": true,
+    "require_unique_displayed_stance": true
   }
 }

@@ -21,6 +21,7 @@ PKU_SAFE_RLHF_REV = "9421ffafec3fa40a1f1a7d567b4d525079477ecb"
 HARMBENCH_REV = "8e1604d1171fe8a48d8febecd22f600e462bdcdd"
 JOB_INTERVIEW_REV = "d4c2bf63b4da95b342fd952065f9ad3e97179134"
 FANTOM_VERSION = "1.0"
+PERSPECTRUM_REV = "master"
 
 
 def sources(hf_endpoint: str) -> dict[str, list[tuple[str, str]]]:
@@ -80,6 +81,24 @@ def sources(hf_endpoint: str) -> dict[str, list[tuple[str, str]]]:
             (
                 "https://storage.googleapis.com/ai2-mosaic-public/projects/fantom/fantom.tar.gz",
                 "fantom.tar.gz",
+            ),
+        ],
+        "perspectrum": [
+            (
+                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/perspectrum_with_answers_v1.0.json",
+                "perspectrum_with_answers_v1.0.json",
+            ),
+            (
+                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/perspective_pool_v1.0.json",
+                "perspective_pool_v1.0.json",
+            ),
+            (
+                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/evidence_pool_v1.0.json",
+                "evidence_pool_v1.0.json",
+            ),
+            (
+                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/README.md",
+                "README.md",
             ),
         ],
         # Only the official held-out shards are needed for the high-confidence
@@ -169,6 +188,7 @@ def main() -> int:
         "deal_or_no_deal": DEAL_REV,
         "job_interview": JOB_INTERVIEW_REV,
         "fantom": FANTOM_VERSION,
+        "perspectrum": PERSPECTRUM_REV,
         "pku_safe_rlhf": PKU_SAFE_RLHF_REV,
         "harmbench_contextual": HARMBENCH_REV,
     }

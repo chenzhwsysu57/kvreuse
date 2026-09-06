@@ -6,7 +6,8 @@
     "pku_safe_rlhf": "9421ffafec3fa40a1f1a7d567b4d525079477ecb",
     "harmbench_contextual": "8e1604d1171fe8a48d8febecd22f600e462bdcdd",
     "job_interview": "d4c2bf63b4da95b342fd952065f9ad3e97179134",
-    "fantom": "1.0"
+    "fantom": "1.0",
+    "perspectrum": "master"
   },
   "hf_endpoint": "https://hf-mirror.com",
   "files": [
@@ -191,6 +192,34 @@
       "url": "https://storage.googleapis.com/ai2-mosaic-public/projects/fantom/fantom.tar.gz",
       "bytes": 1040898,
       "sha256": "1d08dfa0ea474c7f83b9bc7e3a7b466eab25194043489dd618b4c5223e1253a4"
+    },
+    {
+      "dataset": "perspectrum",
+      "path": "data/raw/perspectrum/perspectrum_with_answers_v1.0.json",
+      "url": "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/perspectrum_with_answers_v1.0.json",
+      "bytes": 896802,
+      "sha256": "39d0391d26ebe21efb1cc3162abcc3c4212d2eadfb07514129c3015d6f6ae1f1"
+    },
+    {
+      "dataset": "perspectrum",
+      "path": "data/raw/perspectrum/perspective_pool_v1.0.json",
+      "url": "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/perspective_pool_v1.0.json",
+      "bytes": 1297468,
+      "sha256": "d4d4e78c4777ea971d26546a8819aa9e02c5a68ffff45e10b40ca0cb91b43ae4"
+    },
+    {
+      "dataset": "perspectrum",
+      "path": "data/raw/perspectrum/evidence_pool_v1.0.json",
+      "url": "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/evidence_pool_v1.0.json",
+      "bytes": 7839241,
+      "sha256": "752408354a69277fb245a2c1ca9039a4a8835ad5550d8c43ffa7072fcad7a429"
+    },
+    {
+      "dataset": "perspectrum",
+      "path": "data/raw/perspectrum/README.md",
+      "url": "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/README.md",
+      "bytes": 2071,
+      "sha256": "1fb9dc2185445f71efd54f0a72ae6d138f8795796c02371658d85c65dc915078"
     }
   ]
 }

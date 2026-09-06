@@ -41,6 +41,11 @@
       "valid_before_sampling": 81,
       "written": 81,
       "sampling": "deterministic_random"
+    },
+    "perspectrum": {
+      "valid_before_sampling": 686,
+      "written": 686,
+      "sampling": "deterministic_random"
     }
   }
 }

@@ -142,6 +142,37 @@ def validate_fantom_record(record: dict[str, object]) -> None:
         raise ValueError("FANToM prefixes must use the neutral conversation-timing instruction")
 
 
+def validate_perspectrum_record(record: dict[str, object]) -> None:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("Perspectrum metadata is required")
+    stances = metadata.get("candidate_stances")
+    order = metadata.get("candidate_order")
+    if not isinstance(stances, list) or sorted(stances) != ["support", "undermine"]:
+        raise ValueError("Perspectrum requires exactly one support and one undermine candidate")
+    if not isinstance(order, list) or sorted(order) != [0, 1]:
+        raise ValueError("Perspectrum candidate order is invalid")
+    if metadata.get("construction") != "one_official_support_vs_one_official_undermine":
+        raise ValueError("Perspectrum construction must use official coarse stance labels")
+    if str(metadata.get("support_stance_label_3", "")).upper() != "SUPPORT":
+        raise ValueError("Perspectrum support candidate must retain its official SUPPORT label")
+    if str(metadata.get("undermine_stance_label_3", "")).upper() != "UNDERMINE":
+        raise ValueError("Perspectrum undermine candidate must retain its official UNDERMINE label")
+    if record["gold_a"] != chr(ord("A") + stances.index("support")):
+        raise ValueError("Perspectrum support gold must select the unique support candidate")
+    if record["gold_b"] != chr(ord("A") + stances.index("undermine")):
+        raise ValueError("Perspectrum undermine gold must select the unique undermine candidate")
+    shared = str(record["shared_block"])
+    if not shared.startswith("Claim:\n") or "Candidate perspectives:\n" in shared:
+        raise ValueError("Perspectrum shared context markers are missing")
+    question = str(record["question"])
+    if not question.startswith(
+        "Which candidate has the stance required by the task? Return only one option letter: A or B.\n\n"
+        "Candidate perspectives:\n"
+    ):
+        raise ValueError("Perspectrum candidates must appear after the question")
+
+
 def validate_fantom_access_record(record: dict[str, object]) -> None:
     metadata = record.get("metadata")
     if not isinstance(metadata, dict):
@@ -189,6 +220,8 @@ def main() -> int:
                         validate_fantom_record(record)
                     elif record["dataset"] == "fantom_access":
                         validate_fantom_access_record(record)
+                    elif record["dataset"] == "perspectrum":
+                        validate_perspectrum_record(record)
                 except ValueError as error:
                     raise ValueError(f"{path}:{line_number}: {error}") from error
                 if record["task_id"] in seen:
