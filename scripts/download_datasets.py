@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -21,7 +22,11 @@ PKU_SAFE_RLHF_REV = "9421ffafec3fa40a1f1a7d567b4d525079477ecb"
 HARMBENCH_REV = "8e1604d1171fe8a48d8febecd22f600e462bdcdd"
 JOB_INTERVIEW_REV = "d4c2bf63b4da95b342fd952065f9ad3e97179134"
 FANTOM_VERSION = "1.0"
+CRAIGSLIST_BARGAINS_REV = "main"
+EXPLORE_TOM_REV = "main"
 PERSPECTRUM_REV = "master"
+CASINO_REV = "master"
+HF_EXPORT_DATASETS = {"craigslist_bargains", "explore_tom"}
 
 
 def sources(hf_endpoint: str) -> dict[str, list[tuple[str, str]]]:
@@ -83,24 +88,6 @@ def sources(hf_endpoint: str) -> dict[str, list[tuple[str, str]]]:
                 "fantom.tar.gz",
             ),
         ],
-        "perspectrum": [
-            (
-                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/perspectrum_with_answers_v1.0.json",
-                "perspectrum_with_answers_v1.0.json",
-            ),
-            (
-                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/perspective_pool_v1.0.json",
-                "perspective_pool_v1.0.json",
-            ),
-            (
-                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/evidence_pool_v1.0.json",
-                "evidence_pool_v1.0.json",
-            ),
-            (
-                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/README.md",
-                "README.md",
-            ),
-        ],
         # Only the official held-out shards are needed for the high-confidence
         # evaluation pool (~14 MB instead of the full ~139 MB repository).
         "pku_safe_rlhf": [
@@ -129,6 +116,48 @@ def sources(hf_endpoint: str) -> dict[str, list[tuple[str, str]]]:
             ),
             (
                 f"{github}/centerforaisafety/HarmBench/{HARMBENCH_REV}/LICENSE",
+                "LICENSE",
+            ),
+        ],
+        "craigslist_bargains": [],
+        "explore_tom": [],
+        "perspectrum": [
+            (
+                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/perspectrum_with_answers_v1.0.json",
+                "perspectrum_with_answers_v1.0.json",
+            ),
+            (
+                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/perspective_pool_v1.0.json",
+                "perspective_pool_v1.0.json",
+            ),
+            (
+                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/evidence_pool_v1.0.json",
+                "evidence_pool_v1.0.json",
+            ),
+            (
+                "https://raw.githubusercontent.com/CogComp/perspectrum/master/data/dataset/README.md",
+                "README.md",
+            ),
+        ],
+        "casino": [
+            (
+                f"{github}/kushalchawla/CaSiNo/{CASINO_REV}/data/split/casino_train.json",
+                "casino_train.json",
+            ),
+            (
+                f"{github}/kushalchawla/CaSiNo/{CASINO_REV}/data/split/casino_valid.json",
+                "casino_valid.json",
+            ),
+            (
+                f"{github}/kushalchawla/CaSiNo/{CASINO_REV}/data/split/casino_test.json",
+                "casino_test.json",
+            ),
+            (
+                f"{github}/kushalchawla/CaSiNo/{CASINO_REV}/data/README.md",
+                "README.md",
+            ),
+            (
+                f"{github}/kushalchawla/CaSiNo/{CASINO_REV}/LICENSE",
                 "LICENSE",
             ),
         ],
@@ -162,6 +191,39 @@ def download(url: str, destination: Path, force: bool) -> str:
     return "downloaded"
 
 
+def export_hf_dataset(dataset: str, output_dir: Path, hf_endpoint: str, force: bool) -> list[dict[str, object]]:
+    script = Path(__file__).resolve().parent / "export_hf_datasets.py"
+    python_bin = shutil.which("python3") or sys.executable
+    command = [
+        python_bin,
+        str(script),
+        "--output-dir",
+        str(output_dir),
+        "--datasets",
+        dataset,
+        "--hf-endpoint",
+        hf_endpoint,
+    ]
+    subprocess.run(command, check=True)
+    entries: list[dict[str, object]] = []
+    if dataset == "craigslist_bargains":
+        names = ("train.jsonl", "validation.jsonl", "test.jsonl")
+    elif dataset == "explore_tom":
+        names = ("train.jsonl",)
+    else:
+        raise ValueError(f"unsupported HF export dataset: {dataset}")
+    for name in names:
+        destination = output_dir / dataset / name
+        entries.append({
+            "dataset": dataset,
+            "path": str(destination),
+            "url": f"hf-export://{dataset}/{name}",
+            "bytes": destination.stat().st_size,
+            "sha256": sha256(destination),
+        })
+    return entries
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path, default=Path("data/raw"))
@@ -188,9 +250,12 @@ def main() -> int:
         "deal_or_no_deal": DEAL_REV,
         "job_interview": JOB_INTERVIEW_REV,
         "fantom": FANTOM_VERSION,
-        "perspectrum": PERSPECTRUM_REV,
         "pku_safe_rlhf": PKU_SAFE_RLHF_REV,
         "harmbench_contextual": HARMBENCH_REV,
+        "craigslist_bargains": CRAIGSLIST_BARGAINS_REV,
+        "explore_tom": EXPLORE_TOM_REV,
+        "perspectrum": PERSPECTRUM_REV,
+        "casino": CASINO_REV,
     }
     manifest["revisions"] = {**manifest.get("revisions", {}), **revisions}
     manifest["hf_endpoint"] = args.hf_endpoint
@@ -201,6 +266,16 @@ def main() -> int:
     failures = []
     all_sources = sources(args.hf_endpoint)
     for dataset in args.datasets:
+        if dataset in HF_EXPORT_DATASETS:
+            try:
+                entries = export_hf_dataset(dataset, args.output_dir, args.hf_endpoint, args.force)
+                for entry in entries:
+                    manifest["files"].append(entry)  # type: ignore[union-attr]
+                    print(f"exported   {entry['path']} ({entry['bytes']} bytes)")
+            except (OSError, subprocess.CalledProcessError) as error:
+                failures.append((dataset, str(error)))
+                print(f"FAILED HF export {dataset}: {error}", file=sys.stderr)
+            continue
         for url, name in all_sources[dataset]:
             destination = args.output_dir / dataset / name
             try:

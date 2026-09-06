@@ -41,11 +41,40 @@
     "deduplication": "one_inaccessible_access_scenario_per_source_conversation",
     "require_opposite_information_access": true
   },
+  "craigslist_bargains": {
+    "source_splits": ["train", "validation", "test"],
+    "minimum_candidates": 3,
+    "maximum_candidates": 8,
+    "minimum_unique_optimum_margin": 1.0,
+    "require_opposite_role_optima": true
+  },
+  "craigslist_dialogue": {
+    "source_splits": ["train", "validation", "test"],
+    "require_accept_dialogue_act": true,
+    "require_source_annotated_final_proposal_per_role": true,
+    "require_one_explicit_numeric_price_per_retained_proposal": true,
+    "require_distinct_buyer_seller_final_prices": true,
+    "task": "buyer_vs_seller_final_explicit_proposal_retrieval"
+  },
+  "explore_tom": {
+    "source_split": "train",
+    "scenario": "ground_truth_location_vs_first_order_agent_search_belief",
+    "belief_nth_order": 1,
+    "candidates_after_reusable_block": true,
+    "require_opposite_answers": true
+  },
   "perspectrum": {
     "source_revision": "master",
     "scenario": "one_official_support_vs_one_official_undermine",
     "stance_labels": ["SUPPORT", "UNDERMINE"],
     "one_record_per_claim": true,
     "require_unique_displayed_stance": true
+  },
+  "casino": {
+    "source_splits": ["train", "valid", "test"],
+    "minimum_candidates": 3,
+    "maximum_candidates": 6,
+    "minimum_unique_optimum_margin": 3.0,
+    "require_opposite_role_optima": true
   }
 }

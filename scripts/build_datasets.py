@@ -55,6 +55,18 @@ LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 JOB_INTERVIEW_ISSUES = ("Salary", "Position", "Weekly holiday", "Workplace", "Company")
 JOB_INTERVIEW_MIN_CANDIDATES = 3
 JOB_INTERVIEW_MIN_MARGIN = 0.05
+CRAIGSLIST_MIN_CANDIDATES = 3
+CRAIGSLIST_MAX_CANDIDATES = 10
+CRAIGSLIST_MIN_PRICE_MARGIN = 0.5
+CRAIGSLIST_DIALOGUE_PROPOSAL_INTENTS = frozenset({"init-price", "counter-price", "offer"})
+CRAIGSLIST_DIALOGUE_PRICE_RE = re.compile(
+    r"(?<![\w.])\$?\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)(?![\w.])"
+)
+CASINO_ISSUES = ("Food", "Water", "Firewood")
+CASINO_PRIORITY_POINTS = {"High": 5, "Medium": 4, "Low": 3}
+CASINO_MIN_CANDIDATES = 3
+CASINO_MAX_CANDIDATES = 6
+CASINO_MIN_MARGIN = 3.0
 EXPLORE_TOM_PREFIX_A = (
     "Answer the ground-truth question about the object's current location in the story."
 )
@@ -732,10 +744,462 @@ def build_fantom_access(raw: Path, seed: int) -> list[dict[str, Any]]:
     return records
 
 
-
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     with path.open(encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
+
+
+def craigslist_buyer_utility(price: float, target: float) -> float:
+    if price > target:
+        return float("-inf")
+    return target - price
+
+
+def craigslist_seller_utility(price: float, target: float) -> float:
+    if price < target:
+        return float("-inf")
+    return price - target
+
+
+def build_craigslist_bargains(raw: Path, seed: int) -> list[dict[str, Any]]:
+    """Build buyer-vs-seller price conflicts from Craigslist Bargains negotiations."""
+    records: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for split in ("train", "validation", "test"):
+        path = raw / "craigslist_bargains" / f"{split}.jsonl"
+        if not path.is_file():
+            continue
+        for row_index, row in enumerate(load_jsonl(path)):
+            agent_info = row.get("agent_info")
+            dialogue_acts = row.get("dialogue_acts")
+            items = row.get("items")
+            if not isinstance(agent_info, dict) or not isinstance(dialogue_acts, dict):
+                continue
+            roles = agent_info.get("Role")
+            targets = agent_info.get("Target")
+            prices = dialogue_acts.get("price")
+            if not isinstance(roles, list) or len(roles) != 2:
+                continue
+            if not isinstance(targets, list) or len(targets) != 2:
+                continue
+            if not isinstance(prices, list):
+                continue
+            try:
+                buyer_target = float(targets[0])
+                seller_target = float(targets[1])
+            except (TypeError, ValueError):
+                continue
+            if buyer_target <= 0 or seller_target <= 0:
+                continue
+            positive_prices = sorted({
+                float(price)
+                for price in prices
+                if isinstance(price, (int, float)) and price > 0
+            })
+            positive_prices = sorted(set(positive_prices) | {buyer_target, seller_target})
+            listing_price = None
+            category = "unknown"
+            description = ""
+            if isinstance(items, dict):
+                listing_prices = items.get("Price")
+                categories = items.get("Category")
+                descriptions = items.get("Description")
+                if isinstance(listing_prices, list) and listing_prices:
+                    listing_price = float(listing_prices[0])
+                    positive_prices = sorted(set(positive_prices) | {listing_price})
+                if isinstance(categories, list) and categories:
+                    category = str(categories[0])
+                if isinstance(descriptions, list) and descriptions:
+                    description = str(descriptions[0]).strip()
+            if not CRAIGSLIST_MIN_CANDIDATES <= len(positive_prices) <= CRAIGSLIST_MAX_CANDIDATES:
+                continue
+            buyer_scores = [craigslist_buyer_utility(price, buyer_target) for price in positive_prices]
+            seller_scores = [craigslist_seller_utility(price, seller_target) for price in positive_prices]
+            buyer_finite = [score for score in buyer_scores if score != float("-inf")]
+            seller_finite = [score for score in seller_scores if score != float("-inf")]
+            if len(buyer_finite) < 2 or len(seller_finite) < 2:
+                continue
+            buyer_best = max(buyer_finite)
+            seller_best = max(seller_finite)
+            buyer_indexes = [index for index, score in enumerate(buyer_scores) if abs(score - buyer_best) < 1e-12]
+            seller_indexes = [index for index, score in enumerate(seller_scores) if abs(score - seller_best) < 1e-12]
+            if len(buyer_indexes) != 1 or len(seller_indexes) != 1 or buyer_indexes[0] == seller_indexes[0]:
+                continue
+            buyer_runner_up = sorted(buyer_finite, reverse=True)[1]
+            seller_runner_up = sorted(seller_finite, reverse=True)[1]
+            buyer_margin = buyer_best - buyer_runner_up
+            seller_margin = seller_best - seller_runner_up
+            if min(buyer_margin, seller_margin) < CRAIGSLIST_MIN_PRICE_MARGIN:
+                continue
+            identity = (
+                split,
+                row_index,
+                tuple(positive_prices),
+                round(buyer_target, 4),
+                round(seller_target, 4),
+                category,
+                description[:120],
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            order = list(range(len(positive_prices)))
+            stable_rng(seed, f"craigslist-order:{split}:{row_index}").shuffle(order)
+            displayed_prices = [positive_prices[index] for index in order]
+            lines = [
+                "Listing context:",
+                f"- Category: {category}",
+            ]
+            if listing_price is not None:
+                lines.append(f"- Listed price: ${listing_price:.2f}")
+            if description:
+                lines.append(f"- Description: {description}")
+            lines.append("")
+            lines.append("Candidate final prices for this negotiation:")
+            for display_index, price in enumerate(displayed_prices):
+                lines.append(f"[{LETTERS[display_index]}] ${price:.2f}")
+            records.append({
+                "task_id": f"craigslist-{split}-{row_index}",
+                "dataset": "craigslist_bargains",
+                "prefix_a": (
+                    "You are the buyer.\n"
+                    f"Your maximum willingness to pay is ${buyer_target:.2f}. "
+                    "Your utility for a final price p is (maximum willingness to pay - p). "
+                    "Ignore the seller's reservation price."
+                ),
+                "prefix_b": (
+                    "You are the seller.\n"
+                    f"Your minimum acceptable price is ${seller_target:.2f}. "
+                    "Your utility for a final price p is (p - minimum acceptable price). "
+                    "Ignore the buyer's reservation price."
+                ),
+                "shared_block": "\n".join(lines),
+                "question": (
+                    "Choose the one final price that maximizes your own utility. "
+                    f"Return only one option letter (A-{LETTERS[len(displayed_prices) - 1]})."
+                ),
+                "gold_a": LETTERS[order.index(buyer_indexes[0])],
+                "gold_b": LETTERS[order.index(seller_indexes[0])],
+                "metric": "exact_match",
+                "metadata": {
+                    "split": split,
+                    "source_row": row_index,
+                    "category": category,
+                    "listing_price": listing_price,
+                    "buyer_target": buyer_target,
+                    "seller_target": seller_target,
+                    "candidate_prices": displayed_prices,
+                    "buyer_scores": [buyer_scores[index] for index in order],
+                    "seller_scores": [seller_scores[index] for index in order],
+                    "buyer_margin": buyer_margin,
+                    "seller_margin": seller_margin,
+                    "minimum_margin": CRAIGSLIST_MIN_PRICE_MARGIN,
+                },
+            })
+    return records
+
+
+def craigslist_explicit_prices(text: str) -> list[float]:
+    """Return unambiguous numeric price mentions from one dialogue utterance."""
+    return [float(value.replace(",", "")) for value in CRAIGSLIST_DIALOGUE_PRICE_RE.findall(text)]
+
+
+def build_craigslist_dialogue(raw: Path, seed: int, context: str = "full") -> list[dict[str, Any]]:
+    """Build buyer/seller final-proposal retrieval conflicts from accepted dialogues.
+
+    The source arrays use agent_turn 0 for the buyer and 1 for the seller. We
+    retain only source-annotated price proposals whose sole number in the text
+    exactly matches the source price, so every gold answer is auditable in the
+    shared dialogue.
+    """
+    if context not in {"full", "final_proposals"}:
+        raise ValueError(f"unsupported Craigslist dialogue context: {context}")
+    records: list[dict[str, Any]] = []
+    for split in ("train", "validation", "test"):
+        path = raw / "craigslist_bargains" / f"{split}.jsonl"
+        if not path.is_file():
+            continue
+        for row_index, row in enumerate(load_jsonl(path)):
+            agent_info = row.get("agent_info")
+            turns = row.get("agent_turn")
+            utterances = row.get("utterance")
+            dialogue_acts = row.get("dialogue_acts")
+            if not isinstance(agent_info, dict) or agent_info.get("Role") != ["buyer", "seller"]:
+                continue
+            if not isinstance(turns, list) or not isinstance(utterances, list) or not isinstance(dialogue_acts, dict):
+                continue
+            intents = dialogue_acts.get("intent")
+            prices = dialogue_acts.get("price")
+            if not isinstance(intents, list) or not isinstance(prices, list):
+                continue
+            if not (len(turns) == len(utterances) == len(intents) == len(prices)) or "accept" not in intents:
+                continue
+            proposals: dict[int, list[tuple[int, float, str, str]]] = {0: [], 1: []}
+            rendered_dialogue: list[str] = []
+            for event_index, (speaker, utterance, intent, price) in enumerate(zip(turns, utterances, intents, prices)):
+                if speaker not in proposals or not isinstance(utterance, str):
+                    continue
+                speaker_name = "Buyer" if speaker == 0 else "Seller"
+                if utterance.strip():
+                    rendered_dialogue.append(f"[{speaker_name}] {utterance.strip()}")
+                if intent not in CRAIGSLIST_DIALOGUE_PROPOSAL_INTENTS:
+                    continue
+                if not isinstance(price, (int, float)) or price <= 0:
+                    continue
+                mentioned_prices = craigslist_explicit_prices(utterance)
+                if len(mentioned_prices) != 1 or abs(mentioned_prices[0] - float(price)) > 1e-9:
+                    continue
+                proposals[speaker].append((event_index, float(price), str(intent), utterance.strip()))
+            if not rendered_dialogue or not proposals[0] or not proposals[1]:
+                continue
+            buyer_event = proposals[0][-1]
+            seller_event = proposals[1][-1]
+            if buyer_event[1] == seller_event[1]:
+                continue
+            candidate_prices = [buyer_event[1], seller_event[1]]
+            order = [0, 1]
+            stable_rng(seed, f"craigslist-dialogue-order:{split}:{row_index}").shuffle(order)
+            displayed_prices = [candidate_prices[index] for index in order]
+            if context == "full":
+                shared_block = "Negotiation dialogue:\n" + "\n".join(rendered_dialogue)
+            else:
+                shared_block = (
+                    "Final explicit price proposals from the negotiation:\n"
+                    f"[Buyer] {buyer_event[3]}\n"
+                    f"[Seller] {seller_event[3]}"
+                )
+            records.append({
+                "task_id": f"craigslist-dialogue-{split}-{row_index}",
+                "dataset": "craigslist_dialogue",
+                "prefix_a": "Identify the buyer's final explicit price proposal in the negotiation. Do not infer a mutually agreed sale price.",
+                "prefix_b": "Identify the seller's final explicit price proposal in the negotiation. Do not infer a mutually agreed sale price.",
+                "shared_block": shared_block,
+                "question": (
+                    "Which listed price was last explicitly proposed by the target role? Return only one option letter: A or B.\n\nCandidate prices:\n"
+                    + "\n".join(f"[{LETTERS[index]}] ${price:.2f}" for index, price in enumerate(displayed_prices))
+                ),
+                "gold_a": LETTERS[order.index(0)],
+                "gold_b": LETTERS[order.index(1)],
+                "metric": "exact_match",
+                "metadata": {
+                    "split": split,
+                    "source_row": row_index,
+                    "construction": "accepted_dialogue_final_explicit_proposal_retrieval",
+                    "context_variant": context,
+                    "speaker_role_indexes": {"buyer": 0, "seller": 1},
+                    "proposal_intents": sorted(CRAIGSLIST_DIALOGUE_PROPOSAL_INTENTS),
+                    "buyer_event_index": buyer_event[0],
+                    "seller_event_index": seller_event[0],
+                    "buyer_intent": buyer_event[2],
+                    "seller_intent": seller_event[2],
+                    "buyer_final_price": buyer_event[1],
+                    "seller_final_price": seller_event[1],
+                    "candidate_prices": displayed_prices,
+                    "candidate_roles": ["buyer" if index == 0 else "seller" for index in order],
+                    "dialogue_sha256": hashlib.sha256("\n".join(rendered_dialogue).encode("utf-8")).hexdigest(),
+                },
+            })
+    return records
+
+
+def casino_issue_priority(value2issue: dict[str, str]) -> dict[str, str]:
+    return {issue: priority for priority, issue in value2issue.items()}
+
+
+def casino_utility(allocation: dict[str, str], priority_by_issue: dict[str, str]) -> int:
+    total = 0
+    for issue in CASINO_ISSUES:
+        quantity = int(allocation[issue])
+        priority = priority_by_issue[issue]
+        total += CASINO_PRIORITY_POINTS[priority] * quantity
+    return total
+
+
+def casino_priority_card(agent_label: str, priority_by_issue: dict[str, str]) -> str:
+    ordered = sorted(
+        ((priority, issue) for issue, priority in priority_by_issue.items()),
+        key=lambda item: (-CASINO_PRIORITY_POINTS[item[0]], item[1]),
+    )
+    summary = ", ".join(f"{issue} ({priority})" for priority, issue in ordered)
+    return (
+        f"Your per-package point values follow your issue priorities: high=5, medium=4, low=3. "
+        f"Your priorities from highest to lowest are: {summary}."
+    )
+
+
+def casino_allocation_key(allocation: dict[str, dict[str, str]], agents: tuple[str, str]) -> tuple[Any, ...]:
+    return tuple(sorted((agent, tuple(sorted(allocation[agent].items()))) for agent in agents))
+
+
+def casino_all_package_splits() -> list[tuple[dict[str, str], dict[str, str]]]:
+    splits: list[tuple[dict[str, str], dict[str, str]]] = []
+    for food, water, firewood in itertools.product(range(4), repeat=3):
+        first = {"Food": str(food), "Water": str(water), "Firewood": str(firewood)}
+        second = {
+            "Food": str(3 - food),
+            "Water": str(3 - water),
+            "Firewood": str(3 - firewood),
+        }
+        splits.append((first, second))
+    return splits
+
+
+def format_casino_allocation(allocation: dict[str, str]) -> str:
+    return "(" + ", ".join(f"{issue}={allocation[issue]}" for issue in CASINO_ISSUES) + ")"
+
+
+def build_casino(raw: Path, seed: int) -> list[dict[str, Any]]:
+    """Build campsite package-split conflicts from CaSiNo negotiations."""
+    records: list[dict[str, Any]] = []
+    seen_dialogues: set[str] = set()
+    all_splits = casino_all_package_splits()
+    for split in ("train", "valid", "test"):
+        path = raw / "casino" / f"casino_{split}.json"
+        if not path.is_file():
+            continue
+        dialogues = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(dialogues, list):
+            raise ValueError(f"CaSiNo split must contain a list: {path}")
+        for row_index, row in enumerate(dialogues):
+            dialogue_id = str(row.get("dialogue_id", f"{split}-{row_index}"))
+            if dialogue_id in seen_dialogues:
+                continue
+            seen_dialogues.add(dialogue_id)
+            participant_info = row.get("participant_info")
+            chat_logs = row.get("chat_logs")
+            if not isinstance(participant_info, dict) or not isinstance(chat_logs, list):
+                continue
+            agents = tuple(sorted(participant_info))
+            if len(agents) != 2:
+                continue
+            agent_a, agent_b = agents
+            priorities = {
+                agent: casino_issue_priority(participant_info[agent]["value2issue"])
+                for agent in agents
+            }
+            mentioned: list[dict[str, dict[str, str]]] = []
+            mentioned_keys: set[tuple[Any, ...]] = set()
+            for message in chat_logs:
+                if not isinstance(message, dict):
+                    continue
+                task_data = message.get("task_data") or {}
+                if "issue2youget" not in task_data:
+                    continue
+                proposer = str(message.get("id", ""))
+                if proposer not in participant_info:
+                    continue
+                opponent = agent_b if proposer == agent_a else agent_a
+                allocation = {
+                    proposer: task_data["issue2youget"],
+                    opponent: task_data["issue2theyget"],
+                }
+                key = casino_allocation_key(allocation, agents)
+                if key in mentioned_keys:
+                    continue
+                mentioned_keys.add(key)
+                mentioned.append(allocation)
+            global_scored: list[tuple[int, int, dict[str, dict[str, str]]]] = []
+            for first_alloc, second_alloc in all_splits:
+                allocation = {agent_a: first_alloc, agent_b: second_alloc}
+                score_a = casino_utility(first_alloc, priorities[agent_a])
+                score_b = casino_utility(second_alloc, priorities[agent_b])
+                global_scored.append((score_a, score_b, allocation))
+            best_a = max(item[0] for item in global_scored)
+            best_b = max(item[1] for item in global_scored)
+            optima_a = [item for item in global_scored if item[0] == best_a]
+            optima_b = [item for item in global_scored if item[1] == best_b]
+            if len(optima_a) != 1 or len(optima_b) != 1:
+                continue
+            if optima_a[0][2] == optima_b[0][2]:
+                continue
+            candidate_allocations: list[dict[str, dict[str, str]]] = []
+            candidate_keys: set[tuple[Any, ...]] = set()
+            for allocation in mentioned:
+                key = casino_allocation_key(allocation, agents)
+                if key in candidate_keys:
+                    continue
+                candidate_keys.add(key)
+                candidate_allocations.append(allocation)
+            for _, _, allocation in sorted(global_scored, key=lambda item: (item[0] + item[1]), reverse=True):
+                key = casino_allocation_key(allocation, agents)
+                if key in candidate_keys:
+                    continue
+                candidate_keys.add(key)
+                candidate_allocations.append(allocation)
+                if len(candidate_allocations) >= CASINO_MAX_CANDIDATES:
+                    break
+            if len(candidate_allocations) < CASINO_MIN_CANDIDATES:
+                continue
+            candidate_allocations = candidate_allocations[:CASINO_MAX_CANDIDATES]
+            scores_a = [casino_utility(allocation[agent_a], priorities[agent_a]) for allocation in candidate_allocations]
+            scores_b = [casino_utility(allocation[agent_b], priorities[agent_b]) for allocation in candidate_allocations]
+            best_indexes_a = [index for index, score in enumerate(scores_a) if score == max(scores_a)]
+            best_indexes_b = [index for index, score in enumerate(scores_b) if score == max(scores_b)]
+            if len(best_indexes_a) != 1 or len(best_indexes_b) != 1 or best_indexes_a[0] == best_indexes_b[0]:
+                continue
+            margin_a = max(scores_a) - sorted(scores_a)[-2]
+            margin_b = max(scores_b) - sorted(scores_b)[-2]
+            if min(margin_a, margin_b) < CASINO_MIN_MARGIN:
+                continue
+            order = list(range(len(candidate_allocations)))
+            stable_rng(seed, f"casino-order:{split}:{dialogue_id}").shuffle(order)
+            displayed_allocations = [candidate_allocations[index] for index in order]
+            dialogue_lines = [
+                "Candidate package splits:",
+                "Each option lists both campers' packages as (Food, Water, Firewood).",
+            ]
+            for display_index, allocation in enumerate(displayed_allocations):
+                left = format_casino_allocation(allocation[agent_a])
+                right = format_casino_allocation(allocation[agent_b])
+                dialogue_lines.append(
+                    f"[{LETTERS[display_index]}] {agent_a}={left}; {agent_b}={right}"
+                )
+            dialogue_excerpt: list[str] = []
+            for message in chat_logs:
+                if not isinstance(message, dict):
+                    continue
+                speaker = str(message.get("id", "unknown"))
+                text = str(message.get("text", "")).strip()
+                if text and text not in {"Submit-Deal", "Accept-Deal"}:
+                    dialogue_excerpt.append(f"{speaker}: {text}")
+            records.append({
+                "task_id": f"casino-{split}-{dialogue_id}",
+                "dataset": "casino",
+                "prefix_a": (
+                    f"You are {agent_a} in a campsite negotiation.\n"
+                    + casino_priority_card(agent_a, priorities[agent_a])
+                ),
+                "prefix_b": (
+                    f"You are {agent_b} in a campsite negotiation.\n"
+                    + casino_priority_card(agent_b, priorities[agent_b])
+                ),
+                "shared_block": "\n".join(dialogue_lines),
+                "question": (
+                    "Choose the one package split that maximizes your own total points. "
+                    f"Return only one option letter (A-{LETTERS[len(displayed_allocations) - 1]})."
+                ),
+                "gold_a": LETTERS[order.index(best_indexes_a[0])],
+                "gold_b": LETTERS[order.index(best_indexes_b[0])],
+                "metric": "exact_match",
+                "metadata": {
+                    "split": split,
+                    "dialogue_id": dialogue_id,
+                    "source_row": row_index,
+                    "agent_a": agent_a,
+                    "agent_b": agent_b,
+                    "candidate_count": len(displayed_allocations),
+                    "agent_a_scores": [scores_a[index] for index in order],
+                    "agent_b_scores": [scores_b[index] for index in order],
+                    "agent_a_margin": margin_a,
+                    "agent_b_margin": margin_b,
+                    "minimum_margin": CASINO_MIN_MARGIN,
+                    "mentioned_proposals": len(mentioned),
+                    "dialogue_turns": len(dialogue_excerpt),
+                    "dialogue_excerpt": dialogue_excerpt[:8],
+                },
+            })
+    return records
+
 
 def parse_explore_tom_params(value: Any) -> tuple[Any, ...] | None:
     if not isinstance(value, str):
@@ -1136,6 +1600,9 @@ def main() -> int:
         "fantom",
         "fantom_access",
         "job_interview",
+        "craigslist_bargains",
+        "craigslist_dialogue",
+        "casino",
         "explore_tom",
         "perspectrum",
         "pku_safe_rlhf",
@@ -1143,6 +1610,12 @@ def main() -> int:
     )
     parser.add_argument("--datasets", nargs="+", choices=dataset_names, default=dataset_names)
     parser.add_argument("--seed", type=int, default=20260827)
+    parser.add_argument(
+        "--craigslist-dialogue-context",
+        choices=("full", "final_proposals"),
+        default="full",
+        help="shared context retained for craigslist_dialogue",
+    )
     parser.add_argument("--max-per-dataset", type=int, default=1000, help="0 keeps every valid example")
     parser.add_argument("--examples-per-dataset", type=int, default=5)
     args = parser.parse_args()
@@ -1154,6 +1627,11 @@ def main() -> int:
         "fantom": lambda: build_fantom(args.raw_dir, args.seed),
         "fantom_access": lambda: build_fantom_access(args.raw_dir, args.seed),
         "job_interview": lambda: build_job_interview(args.raw_dir, args.seed),
+        "craigslist_bargains": lambda: build_craigslist_bargains(args.raw_dir, args.seed),
+        "craigslist_dialogue": lambda: build_craigslist_dialogue(
+            args.raw_dir, args.seed, args.craigslist_dialogue_context
+        ),
+        "casino": lambda: build_casino(args.raw_dir, args.seed),
         "explore_tom": lambda: build_explore_tom(args.raw_dir, args.seed),
         "perspectrum": lambda: build_perspectrum(args.raw_dir, args.seed),
         "pku_safe_rlhf": lambda: build_pku_safe_rlhf(args.raw_dir, args.seed),

@@ -142,35 +142,68 @@ def validate_fantom_record(record: dict[str, object]) -> None:
         raise ValueError("FANToM prefixes must use the neutral conversation-timing instruction")
 
 
-def validate_perspectrum_record(record: dict[str, object]) -> None:
+def validate_craigslist_record(record: dict[str, object]) -> None:
     metadata = record.get("metadata")
     if not isinstance(metadata, dict):
-        raise ValueError("Perspectrum metadata is required")
-    stances = metadata.get("candidate_stances")
-    order = metadata.get("candidate_order")
-    if not isinstance(stances, list) or sorted(stances) != ["support", "undermine"]:
-        raise ValueError("Perspectrum requires exactly one support and one undermine candidate")
-    if not isinstance(order, list) or sorted(order) != [0, 1]:
-        raise ValueError("Perspectrum candidate order is invalid")
-    if metadata.get("construction") != "one_official_support_vs_one_official_undermine":
-        raise ValueError("Perspectrum construction must use official coarse stance labels")
-    if str(metadata.get("support_stance_label_3", "")).upper() != "SUPPORT":
-        raise ValueError("Perspectrum support candidate must retain its official SUPPORT label")
-    if str(metadata.get("undermine_stance_label_3", "")).upper() != "UNDERMINE":
-        raise ValueError("Perspectrum undermine candidate must retain its official UNDERMINE label")
-    if record["gold_a"] != chr(ord("A") + stances.index("support")):
-        raise ValueError("Perspectrum support gold must select the unique support candidate")
-    if record["gold_b"] != chr(ord("A") + stances.index("undermine")):
-        raise ValueError("Perspectrum undermine gold must select the unique undermine candidate")
+        raise ValueError("Craigslist metadata is required")
+    prices = metadata.get("candidate_prices")
+    buyer_scores = metadata.get("buyer_scores")
+    seller_scores = metadata.get("seller_scores")
+    if not isinstance(prices, list) or not 3 <= len(prices) <= 10:
+        raise ValueError("Craigslist must contain three to ten candidate prices")
+    if not isinstance(buyer_scores, list) or not isinstance(seller_scores, list):
+        raise ValueError("Craigslist utility scores are required")
+    if len(buyer_scores) != len(prices) or len(seller_scores) != len(prices):
+        raise ValueError("Craigslist candidate/score length mismatch")
+    buyer_values = [float(value) for value in buyer_scores if value != float("-inf")]
+    seller_values = [float(value) for value in seller_scores if value != float("-inf")]
+    if len(buyer_values) < 2 or len(seller_values) < 2:
+        raise ValueError("Craigslist requires at least two feasible prices per role")
+    buyer_best = [index for index, value in enumerate(buyer_scores) if value != float("-inf") and abs(value - max(buyer_values)) < 1e-12]
+    seller_best = [index for index, value in enumerate(seller_scores) if value != float("-inf") and abs(value - max(seller_values)) < 1e-12]
+    if len(buyer_best) != 1 or len(seller_best) != 1 or buyer_best == seller_best:
+        raise ValueError("Craigslist requires distinct unique role optima")
+    try:
+        margin = float(metadata.get("minimum_margin"))
+    except (TypeError, ValueError):
+        raise ValueError("Craigslist margin must be numeric") from None
+    if record["gold_a"] != chr(ord("A") + buyer_best[0]):
+        raise ValueError("Craigslist buyer gold does not select the utility optimum")
+    if record["gold_b"] != chr(ord("A") + seller_best[0]):
+        raise ValueError("Craigslist seller gold does not select the utility optimum")
+    if max(buyer_values) - sorted(buyer_values)[-2] + 1e-12 < margin:
+        raise ValueError("Craigslist buyer utility margin is below threshold")
+    if max(seller_values) - sorted(seller_values)[-2] + 1e-12 < margin:
+        raise ValueError("Craigslist seller utility margin is below threshold")
+
+
+def validate_craigslist_dialogue_record(record: dict[str, object]) -> None:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("Craigslist dialogue metadata is required")
+    if metadata.get("construction") != "accepted_dialogue_final_explicit_proposal_retrieval":
+        raise ValueError("Craigslist dialogue construction is invalid")
+    if metadata.get("speaker_role_indexes") != {"buyer": 0, "seller": 1}:
+        raise ValueError("Craigslist dialogue speaker-role mapping is invalid")
+    if metadata.get("context_variant") not in {"full", "final_proposals"}:
+        raise ValueError("Craigslist dialogue context variant is invalid")
+    prices = metadata.get("candidate_prices")
+    roles = metadata.get("candidate_roles")
+    if not isinstance(prices, list) or len(prices) != 2 or len(set(prices)) != 2:
+        raise ValueError("Craigslist dialogue requires two distinct candidate prices")
+    if not isinstance(roles, list) or sorted(roles) != ["buyer", "seller"]:
+        raise ValueError("Craigslist dialogue candidate roles are invalid")
+    if record["gold_a"] != chr(ord("A") + roles.index("buyer")):
+        raise ValueError("Craigslist dialogue buyer gold is invalid")
+    if record["gold_b"] != chr(ord("A") + roles.index("seller")):
+        raise ValueError("Craigslist dialogue seller gold is invalid")
     shared = str(record["shared_block"])
-    if not shared.startswith("Claim:\n") or "Candidate perspectives:\n" in shared:
-        raise ValueError("Perspectrum shared context markers are missing")
-    question = str(record["question"])
-    if not question.startswith(
-        "Which candidate has the stance required by the task? Return only one option letter: A or B.\n\n"
-        "Candidate perspectives:\n"
+    if metadata["context_variant"] == "full" and not shared.startswith("Negotiation dialogue:\n"):
+        raise ValueError("Craigslist dialogue full context marker is missing")
+    if metadata["context_variant"] == "final_proposals" and not shared.startswith(
+        "Final explicit price proposals from the negotiation:\n"
     ):
-        raise ValueError("Perspectrum candidates must appear after the question")
+        raise ValueError("Craigslist dialogue final-proposals context marker is missing")
 
 
 def validate_explore_tom_record(record: dict[str, object]) -> None:
@@ -203,6 +236,68 @@ def validate_explore_tom_record(record: dict[str, object]) -> None:
         "Candidate containers:\n"
     ):
         raise ValueError("ExploreToM candidates must appear after the question")
+
+
+def validate_casino_record(record: dict[str, object]) -> None:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("CaSiNo metadata is required")
+    scores_a = metadata.get("agent_a_scores")
+    scores_b = metadata.get("agent_b_scores")
+    if not isinstance(scores_a, list) or not isinstance(scores_b, list):
+        raise ValueError("CaSiNo utility scores are required")
+    if not 3 <= len(scores_a) <= 6 or len(scores_a) != len(scores_b):
+        raise ValueError("CaSiNo must contain three to six candidate splits")
+    try:
+        margin = float(metadata.get("minimum_margin"))
+    except (TypeError, ValueError):
+        raise ValueError("CaSiNo margin must be numeric") from None
+    best_a = [index for index, value in enumerate(scores_a) if abs(float(value) - max(map(float, scores_a))) < 1e-12]
+    best_b = [index for index, value in enumerate(scores_b) if abs(float(value) - max(map(float, scores_b))) < 1e-12]
+    if len(best_a) != 1 or len(best_b) != 1 or best_a == best_b:
+        raise ValueError("CaSiNo requires distinct unique role optima")
+    if record["gold_a"] != chr(ord("A") + best_a[0]):
+        raise ValueError("CaSiNo agent A gold does not select the utility optimum")
+    if record["gold_b"] != chr(ord("A") + best_b[0]):
+        raise ValueError("CaSiNo agent B gold does not select the utility optimum")
+    if max(map(float, scores_a)) - sorted(map(float, scores_a))[-2] + 1e-12 < margin:
+        raise ValueError("CaSiNo agent A utility margin is below threshold")
+    if max(map(float, scores_b)) - sorted(map(float, scores_b))[-2] + 1e-12 < margin:
+        raise ValueError("CaSiNo agent B utility margin is below threshold")
+    shared = str(record["shared_block"])
+    if not shared.startswith("Candidate package splits:\n"):
+        raise ValueError("CaSiNo shared context markers are missing")
+
+
+def validate_perspectrum_record(record: dict[str, object]) -> None:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("Perspectrum metadata is required")
+    stances = metadata.get("candidate_stances")
+    order = metadata.get("candidate_order")
+    if not isinstance(stances, list) or sorted(stances) != ["support", "undermine"]:
+        raise ValueError("Perspectrum requires exactly one support and one undermine candidate")
+    if not isinstance(order, list) or sorted(order) != [0, 1]:
+        raise ValueError("Perspectrum candidate order is invalid")
+    if metadata.get("construction") != "one_official_support_vs_one_official_undermine":
+        raise ValueError("Perspectrum construction must use official coarse stance labels")
+    if str(metadata.get("support_stance_label_3", "")).upper() != "SUPPORT":
+        raise ValueError("Perspectrum support candidate must retain its official SUPPORT label")
+    if str(metadata.get("undermine_stance_label_3", "")).upper() != "UNDERMINE":
+        raise ValueError("Perspectrum undermine candidate must retain its official UNDERMINE label")
+    if record["gold_a"] != chr(ord("A") + stances.index("support")):
+        raise ValueError("Perspectrum support gold must select the unique support candidate")
+    if record["gold_b"] != chr(ord("A") + stances.index("undermine")):
+        raise ValueError("Perspectrum undermine gold must select the unique undermine candidate")
+    shared = str(record["shared_block"])
+    if not shared.startswith("Claim:\n") or "Candidate perspectives:\n" in shared:
+        raise ValueError("Perspectrum shared context markers are missing")
+    question = str(record["question"])
+    if not question.startswith(
+        "Which candidate has the stance required by the task? Return only one option letter: A or B.\n\n"
+        "Candidate perspectives:\n"
+    ):
+        raise ValueError("Perspectrum candidates must appear after the question")
 
 
 def validate_fantom_access_record(record: dict[str, object]) -> None:
@@ -252,6 +347,12 @@ def main() -> int:
                         validate_fantom_record(record)
                     elif record["dataset"] == "fantom_access":
                         validate_fantom_access_record(record)
+                    elif record["dataset"] == "craigslist_bargains":
+                        validate_craigslist_record(record)
+                    elif record["dataset"] == "craigslist_dialogue":
+                        validate_craigslist_dialogue_record(record)
+                    elif record["dataset"] == "casino":
+                        validate_casino_record(record)
                     elif record["dataset"] == "explore_tom":
                         validate_explore_tom_record(record)
                     elif record["dataset"] == "perspectrum":
