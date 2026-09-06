@@ -1036,12 +1036,15 @@ def main() -> int:
                 recomputed_tail_tokens = min(16, block_length)
                 donor_length = block_length - recomputed_tail_tokens
                 # The donor prefix retains the relocated KV, while the final
-                # min(16, B) tokens are run serially under the target cache.
+                # min(16, B) tokens are recomputed together under the target
+                # cache. Causal attention preserves the same token dependency
+                # structure without one model call per token.
                 mixed = splice_prefix_block(
                     target_prefixes[target], slice_cache(relocated, 0, donor_length)
                 )
-                for block_index in range(donor_length, block_length):
-                    _, mixed = forward_suffix(model, mixed, parts[target].block_ids[block_index:block_index + 1])
+                _, mixed = forward_suffix(
+                    model, mixed, parts[target].block_ids[donor_length:block_length]
+                )
             else:
                 mixed = splice_prefix_block(target_prefixes[target], relocated)
             repeated_prefix_tokens = 0
