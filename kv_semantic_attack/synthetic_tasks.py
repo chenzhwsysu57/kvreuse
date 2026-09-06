@@ -30,6 +30,11 @@ TASK_TYPES = {
     "label_mapping": ("encoding", "标签映射"),
     "format_switch": ("encoding", "格式切换：JSON／CSV"),
     "case_switch": ("encoding", "大小写切换"),
+    "set_relation": ("set", "集合关系：交集／差集"),
+    "boolean_logic": ("logic", "布尔逻辑：AND／OR"),
+    "lookup_direction": ("mapping", "双向查表：代码→名称／名称→代码"),
+    "counting_property": ("counting", "属性计数：满足／不满足"),
+    "record_consistency": ("relation", "记录一致性：相等／不相等"),
 }
 LAYOUTS = ("table", "json", "lines")
 QUESTION = "Select the option whose payload is the answer required by the task. Return only its option letter."
@@ -51,6 +56,9 @@ def render_block(data: dict[str, Any], layout: str) -> str:
         raise ValueError(f"unknown layout: {layout}")
     if data["kind"] == "expression":
         body = "Expression: " + " + ".join(str(x) for x in data["numbers"])
+    elif data["kind"] == "sets":
+        body = f"{data['left_name']}: " + ", ".join(data["left"])
+        body += f"\n{data['right_name']}: " + ", ".join(data["right"])
     else:
         rows = data["rows"]
         columns = list(rows[0])
@@ -78,6 +86,11 @@ def solve(data: dict[str, Any], rule: dict[str, Any]) -> str:
         if op == "sum_numbers":
             return str(sum(numbers))
         return ",".join(map(str, numbers))
+    if op == "set":
+        left = set(rule["left"])
+        right = set(rule["right"])
+        result = left & right if rule["relation"] == "intersection" else left - right
+        return ",".join(sorted(result))
 
     rows = list(data["rows"])
     if "filter" in rule:
@@ -97,6 +110,26 @@ def solve(data: dict[str, Any], rule: dict[str, Any]) -> str:
         if len(winners) != 1:
             raise ValueError("selection does not have a unique answer")
         return str(winners[0]["id"])
+    if op == "logic":
+        matches = [row for row in rows if (
+            row["p"] and row["q"] if rule["operator"] == "and" else row["p"] and not row["q"]
+        )]
+        if len(matches) != 1:
+            raise ValueError("logical predicate must select exactly one row")
+        return str(matches[0]["id"])
+    if op == "lookup":
+        key_field, value_field = ("code", "name") if rule["direction"] == "code_to_name" else ("name", "code")
+        matches = [row for row in rows if row[key_field] == rule["query"]]
+        if len(matches) != 1:
+            raise ValueError("lookup query must identify exactly one row")
+        return str(matches[0][value_field])
+    if op == "count_property":
+        return str(sum(row[rule["field"]] == rule["value"] for row in rows))
+    if op == "consistency":
+        matches = [row for row in rows if sum(a != b for a, b in zip(row["left"], row["right"])) == rule["mismatches"]]
+        if len(matches) != 1:
+            raise ValueError("consistency rule must select exactly one row")
+        return str(matches[0]["id"])
     if op == "aggregate":
         return str(len(rows) if rule["mode"] == "count" else sum(row[rule["field"]] for row in rows))
     if op == "sort":
@@ -165,6 +198,22 @@ def render_instruction(rule: dict[str, Any], style: int) -> str:
     elif op == "case":
         casing = "UPPERCASE" if rule["case"] == "upper" else "lowercase"
         text = f"Read the name of row {rule['target_id']} and convert it to {casing}. Output only the converted name."
+    elif op == "set":
+        relation = "intersection" if rule["relation"] == "intersection" else "items in the first set but not the second"
+        text = f"Compute the {relation} of sets {rule['left_name']} and {rule['right_name']}. "
+        text += "Output the item names in alphabetical order, separated by commas without spaces."
+    elif op == "logic":
+        operator = "both p and q are true" if rule["operator"] == "and" else "p is true and q is false"
+        text = f"Select the unique row where {operator}. Output only its id."
+    elif op == "lookup":
+        if rule["direction"] == "code_to_name":
+            text = f"Look up code {rule['query']} and output its corresponding name."
+        else:
+            text = f"Look up name {rule['query']} and output its corresponding code."
+    elif op == "count_property":
+        text = f"Count rows whose {rule['field']} is {rule['value']}. Output only the integer."
+    elif op == "consistency":
+        text = f"Select the unique row whose left and right codes differ in exactly {rule['mismatches']} character(s). Output only its id."
     else:
         raise ValueError(f"unknown operation: {op}")
     return PREAMBLES[style] + text + " Do not add an explanation, markdown fences, or an answer wrapper."
@@ -201,6 +250,51 @@ def _make_spec(task_type: str, rng: random.Random, n: int) -> tuple[dict[str, An
         target = rng.choice(ids)
         a = {"op": "case", "target_id": target, "case": "upper"}
         b = {**a, "case": "lower"}
+    elif task_type == "set_relation":
+        universe = [f"item_{x}" for x in rng.sample(range(100, 10000), 8)]
+        left = rng.sample(universe, 5)
+        right = rng.sample(universe, 4)
+        intersection = sorted(set(left) & set(right))
+        difference = sorted(set(left) - set(right))
+        if not intersection or not difference:
+            return _make_spec(task_type, rng, n)
+        data = {"kind": "sets", "left_name": "alpha", "right_name": "beta", "left": left, "right": right}
+        a = {"op": "set", "relation": "intersection", "left": left, "right": right,
+             "left_name": "alpha", "right_name": "beta"}
+        b = {**a, "relation": "difference"}
+        return data, a, b
+    elif task_type == "boolean_logic":
+        patterns = [(True, True), (True, False), (False, True), (False, False)]
+        rng.shuffle(patterns)
+        rows = [dict(id=id_, p=p, q=q) for id_, (p, q) in zip(ids[:4], patterns)]
+        a, b = {"op": "logic", "operator": "and"}, {"op": "logic", "operator": "and_not_q"}
+    elif task_type == "lookup_direction":
+        names = ["".join(rng.choices(string.ascii_lowercase, k=6)) for _ in ids]
+        codes = [f"C{x}" for x in rng.sample(range(100, 10000), n)]
+        rows = [dict(code=code, name=name) for code, name in zip(codes, names)]
+        selected = rng.randrange(n)
+        a = {"op": "lookup", "direction": "code_to_name", "query": codes[selected]}
+        b = {"op": "lookup", "direction": "name_to_code", "query": names[selected]}
+    elif task_type == "counting_property":
+        flags = [True] * rng.randint(1, n - 1) + [False] * rng.randint(1, n - 1)
+        while len(flags) < n:
+            flags.append(rng.choice((True, False)))
+        rng.shuffle(flags)
+        rows = [dict(id=id_, active=flag) for id_, flag in zip(ids, flags)]
+        a = {"op": "count_property", "field": "active", "value": True}
+        b = {**a, "value": False}
+    elif task_type == "record_consistency":
+        rows = []
+        for index, id_ in enumerate(ids[:4]):
+            left = "".join(rng.choices(string.ascii_uppercase, k=5))
+            mismatch_count = (1, 2, 3, 4)[index]
+            positions = rng.sample(range(5), mismatch_count)
+            right = "".join(
+                (rng.choice([c for c in string.ascii_uppercase if c != char]) if pos in positions else char)
+                for pos, char in enumerate(left)
+            )
+            rows.append(dict(id=id_, left=left, right=right))
+        a, b = {"op": "consistency", "mismatches": 1}, {"op": "consistency", "mismatches": 2}
     else:
         values = rng.sample(range(2, 1000), n)
         rows = [dict(id=id_, value=value) for id_, value in zip(ids, values)]
@@ -313,7 +407,7 @@ def generate_tasks(
                 group_id = _digest(data)
                 if gold_a == gold_b or group_id in seen:
                     continue
-                layout = "expression" if data["kind"] == "expression" else rng.choice(layouts)
+                layout = "expression" if data["kind"] in {"expression", "sets"} else rng.choice(layouts)
                 # Expression rendering has a single meaningful layout.
                 render_layout = "lines" if layout == "expression" else layout
                 style = rng.randrange(len(PREAMBLES))

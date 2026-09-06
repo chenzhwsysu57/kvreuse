@@ -45,6 +45,11 @@ python kv_semantic_attack/generate_synthetic_tasks.py --per-type 100 \
 | label_mapping | true→A / true→B，false 映射相反 | 同一阈值判断 → A/B |
 | format_switch | JSON / CSV | 相同行的相同字段 → 不同序列化 |
 | case_switch | 大写 / 小写 | 相同 name → 不同大小写 |
+| set_relation | 两集合交集 / 差集 | 两个命名集合 → 项目列表 |
+| boolean_logic | $p \land q$ / $p \land \neg q$ | 真值表 → 行 ID |
+| lookup_direction | code→name / name→code | 双向字典 → 映射值 |
+| counting_property | 属性为真 / 为假 的行数 | 布尔属性表 → 整数 |
+| record_consistency | 左右代码差 1 位 / 差 2 位 | 成对代码 → 行 ID |
 
 每对随机交换 A/B；同一对的措辞前导模板相同，避免引入额外方向差异。
 资料行数、数值、ID、目标行和布局随机变化；提供三种前导措辞。

@@ -27,6 +27,13 @@ def parse_shared_block(block, layout, kind):
     if kind == "expression":
         return {"kind": kind, "numbers": [int(x) for x in body.removeprefix("Expression: ").split(" + ")],
                 "option_letters": list(option_letters), "option_values": list(option_values)}
+    if kind == "sets":
+        left, right = body.splitlines()
+        left_name, left_items = left.split(": ", 1)
+        right_name, right_items = right.split(": ", 1)
+        return {"kind": kind, "left_name": left_name, "right_name": right_name,
+                "left": left_items.split(", "), "right": right_items.split(", "),
+                "option_letters": list(option_letters), "option_values": list(option_values)}
     if layout == "json":
         rows = json.loads(body)
     elif layout == "table":
@@ -39,6 +46,9 @@ def parse_shared_block(block, layout, kind):
         for key in ("value", "cost", "speed"):
             if key in row:
                 row[key] = int(row[key])
+        for key in ("p", "q", "active"):
+            if key in row and isinstance(row[key], str):
+                row[key] = row[key] == "True"
     return {"kind": "rows", "rows": rows,
             "option_letters": list(option_letters), "option_values": list(option_values)}
 
@@ -49,10 +59,10 @@ class GeneratedDataTests(unittest.TestCase):
         cls.records = list(generate_tasks({name: 100 for name in TASK_TYPES}, seed=35))
 
     def test_exact_counts_ids_and_conflicts(self):
-        self.assertEqual(len(self.records), 1100)
+        self.assertEqual(len(self.records), 100 * len(TASK_TYPES))
         self.assertEqual(Counter(r["attack_type"] for r in self.records), {name: 100 for name in TASK_TYPES})
-        self.assertEqual(len({r["task_id"] for r in self.records}), 1100)
-        self.assertEqual(len({r["shared_data_id"] for r in self.records}), 1100)
+        self.assertEqual(len({r["task_id"] for r in self.records}), len(self.records))
+        self.assertEqual(len({r["shared_data_id"] for r in self.records}), len(self.records))
         for record in self.records:
             validate_generated_record(record)
             self.assertNotEqual(record["gold_a"], record["gold_b"])
@@ -83,7 +93,7 @@ class GeneratedDataTests(unittest.TestCase):
             rows = [r for r in self.records if r["attack_type"] == task_type]
             self.assertGreater(len({r["metadata"]["instruction_style"] for r in rows}), 1)
             self.assertGreater(len({r["metadata"]["num_rows"] for r in rows}), 1)
-            if task_type != "task_switch":
+            if task_type not in {"task_switch", "set_relation"}:
                 self.assertEqual({r["metadata"]["layout"] for r in rows}, set(LAYOUTS))
             if task_type == "priority_switch":
                 for record in rows:
@@ -132,7 +142,7 @@ class GeneratedDataTests(unittest.TestCase):
     def test_many_seeds_and_fixed_layouts(self):
         for seed in range(10):
             records = list(generate_tasks({name: 10 for name in TASK_TYPES}, seed=seed, min_rows=4, max_rows=4, layouts=("json",)))
-            self.assertEqual(len(records), 110)
+            self.assertEqual(len(records), 10 * len(TASK_TYPES))
             for record in records:
                 validate_generated_record(record)
                 self.assertEqual(record["metadata"]["num_rows"], 4)
@@ -200,10 +210,10 @@ class CLITests(unittest.TestCase):
             result = self.run_cli(output, *args)
             self.assertEqual(result.returncode, 0, result.stderr)
             manifest = json.loads((output / "manifest.json").read_text())
-            self.assertEqual(manifest["pairs"], 25)
-            self.assertEqual(manifest["reuse_directions"], 50)
+            self.assertEqual(manifest["pairs"], 2 * len(TASK_TYPES) + 3)
+            self.assertEqual(manifest["reuse_directions"], 2 * manifest["pairs"])
             original = (output / "all.jsonl").read_bytes()
-            self.assertEqual(len(original.splitlines()), 25)
+            self.assertEqual(len(original.splitlines()), manifest["pairs"])
             self.assertNotEqual(self.run_cli(output, *args).returncode, 0)
             self.assertEqual((output / "all.jsonl").read_bytes(), original)
             self.assertEqual(self.run_cli(output, *args, "--overwrite").returncode, 0)
