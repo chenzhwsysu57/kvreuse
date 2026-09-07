@@ -1,3 +1,4 @@
 # Reproducible synthetic task outputs, not source files.
 generated_tasks*/
 eval_outputs/
+adaptive_runs/

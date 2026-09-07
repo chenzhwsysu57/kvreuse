@@ -128,6 +128,71 @@ python kv_semantic_attack/eval_synthetic_batch.py --per-type-limit 2 \
 未来若增加资料重新排序等变体，应显式保留其父资料分组 ID。
 若需更强泛化评估，应再保留未参与搜索的任务规则、模板或组合，不能仅换 seed 就声称跨任务泛化。
 
+## 自适应攻击：第一步
+
+[adaptive_attack.py](adaptive_attack.py) 实现“攻击 LLM → 程序生成”的受限接口。
+攻击 LLM 只可提出 `task_weights`、样本数、资料长度和布局；程序负责验证配置、分配每类数量、
+生成资料和 gold。LLM 不能提交自由题目、答案、suffix 或代码。
+
+```sh
+cat > /tmp/attack_distribution.json <<'EOF'
+{"task_weights":{"task_switch":3,"boolean_logic":1,"set_relation":1},"pairs":128,"min_rows":4,"max_rows":12,"layouts":["table","json"],"min_pairs_per_type":4,"rationale":"focus on observed weak families"}
+EOF
+python kv_semantic_attack/generate_adaptive_attack_batch.py \
+   --proposal /tmp/attack_distribution.json --seed 20260907 --round 1 \
+   --output kv_semantic_attack/adaptive_runs/round_01_candidates.jsonl
+```
+
+数量采用最大余数法，`min_pairs_per_type` 是探索下限；生成数据附加不可变的 distribution、seed、round 和 request ID。
+该步骤不调用模型、也不筛选有效攻击。下一步才评估 `Full correct ∧ Reuse+suffix wrong`。
+
+调用真实 Qwen 3.8 Max 时使用 [run_adaptive_attacker.py](run_adaptive_attacker.py)。
+它复用 `.env.local` 的 `DASHSCOPE_*` 配置，并将完整请求／响应写入 `--log-dir`：
+
+```sh
+python kv_semantic_attack/run_adaptive_attacker.py \
+   --dashboard /tmp/dashboard.json --seed 20260907 --round 1 \
+   --pairs 1000 \
+   --output kv_semantic_attack/adaptive_runs/round_01_candidates.jsonl --debug
+```
+
+攻击 LLM 的分析必须置于 JSON 的 `reasoning` 字段；程序只接受指定 schema，随后独立生成资料及 gold。
+`--pairs N` 可在 LLM 已选择任务权重、行数和布局后强制本轮总量为 $N$ 对（1–2000）；
+例如 `--pairs 1000` 生成 1000 对、2000 个复用方向。
+
+## 环境 step 写盘
+
+三个阶段都支持 `--run-dir RUN_DIR --step N`（必须同时提供）。每次动作创建不可覆盖的
+`RUN_DIR/steps/step_NN_*.json`，记录输入／输出路径与 SHA-256、模型与 batch 配置、攻击分布、
+每个 suffix 全文及其分类型结果和耗时。API 的完整请求与原始回答写入 `RUN_DIR/api_traces/`。
+
+```sh
+# step 1：攻击分布和生成数据；step 2：防御suffix；step 3：Full/Reuse/suffix评测
+python kv_semantic_attack/run_adaptive_attacker.py ... --run-dir kv_semantic_attack/adaptive_runs/run_001 --step 1
+python kv_semantic_attack/run_adaptive_defender.py ... --run-dir kv_semantic_attack/adaptive_runs/run_001 --step 2
+python kv_semantic_attack/evaluate_suffix_candidates.py ... --run-dir kv_semantic_attack/adaptive_runs/run_001 --step 3
+```
+
+同一 step/action 已存在时程序拒绝覆盖；每轮继续使用下一个 step 编号。
+
+## 多 GPU 防御评测
+
+[run_multi_gpu_defense.py](run_multi_gpu_defense.py) 将 Full、direct Reuse 和每个 suffix 作为独立进程调度。
+`--gpu-slots` 指定每张 GPU 最多并发任务数；每个子进程退出后会释放模型和 CUDA 缓存。
+
+```sh
+python kv_semantic_attack/run_multi_gpu_defense.py \
+   --input kv_semantic_attack/adaptive_runs/run_001/round_01_candidates.jsonl \
+   --candidates kv_semantic_attack/adaptive_runs/run_001/round_01_suffixes.json \
+   --output-dir kv_semantic_attack/adaptive_runs/run_001/parallel_eval \
+   --gpu-slots 0=2 1=2 2=1 \
+   --max-used-gib 4 --model 1.7b --batch-size 16
+```
+
+启动任务前，空闲 GPU 的外部显存占用必须不超过 `--max-used-gib`；调度器无法从 `nvidia-smi` 区分自己的子进程，
+因此一旦已占有一个 slot，就按用户授权填满该 GPU 的剩余 slot。每个 job 的终端输出保存在 `output-dir/logs/`，
+结果和 GPU、退出状态、耗时保存在 `dispatch_manifest.json`。
+
 ## 测试
 
 ```sh

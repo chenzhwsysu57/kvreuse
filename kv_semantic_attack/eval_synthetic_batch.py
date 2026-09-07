@@ -18,6 +18,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
+import torch
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -67,12 +69,17 @@ def raw_result(tokenizer, dataset, gold, token_ids, hit_limit, elapsed,
 
 
 @contextmanager
-def raw_batch_adapter(batch):
+def raw_batch_adapter(batch, suffix: str = ""):
     def build_parts(tokenizer, record, side, method):
         if method not in ("full", "reuse"):
             raise ValueError("this evaluation permits only uncorrected full/reuse")
+        modified = dict(record)
+        if suffix:
+            # `question` is after the shared block in build_prompt_parts, so
+            # this leaves donor KV unchanged and is precisely a post-block suffix.
+            modified["question"] = suffix + "\n\n" + record["question"]
         return batch.base.build_prompt_parts(
-            tokenizer, record, side, enable_thinking=False,
+            tokenizer, modified, side, enable_thinking=False,
             explicit_reasoning=False, boxed_output=True,
         )
 
@@ -139,6 +146,8 @@ def parse_args(argv=None):
     parser.add_argument("--output", type=Path)
     parser.add_argument("--model", choices=("0.6b", "1.7b", "4b", "8b"), default="1.7b")
     parser.add_argument("--method", choices=("full", "reuse", "both"), default="both")
+    parser.add_argument("--suffix-file", type=Path,
+                        help="UTF-8 post-block suffix; applied only to reuse, not Full")
     parser.add_argument("--reuse-engine", choices=("reference", "vectorized", "scatter"), default="reference",
                         help="reference is scripts/batch_eval.py; vectorized avoids per-direction KV clones")
     parser.add_argument("--strip-shared-data-tags", action="store_true",
@@ -193,9 +202,21 @@ def evaluate_chunk(batch, model, tokenizer, chunk, methods, max_new_tokens, timi
     return values
 
 
+def cuda_memory_gib():
+    if not torch.cuda.is_available():
+        return {}
+    return {
+        "allocated_gib": torch.cuda.max_memory_allocated() / 2**30,
+        "reserved_gib": torch.cuda.max_memory_reserved() / 2**30,
+    }
+
+
 def main():
     args = parse_args()
     methods = ["full", "reuse"] if args.method == "both" else [args.method]
+    suffix = args.suffix_file.read_text(encoding="utf-8").strip() if args.suffix_file else ""
+    if args.suffix_file and not suffix:
+        raise ValueError("--suffix-file is empty")
     started = time.perf_counter()
     import batch_eval as batch
 
@@ -222,6 +243,8 @@ def main():
               "effective_input_sha256": hashlib.sha256(json.dumps(selected, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
               "allow_batch_mismatch": args.allow_batch_mismatch,
               "semantic_repair": False, "methods": methods,
+              "post_block_suffix": suffix,
+              "post_block_suffix_chars": len(suffix),
               "reuse_engine": args.reuse_engine,
               "verify_per_type": args.verify_per_type, "save_every": args.save_every,
               "note": "Reuse includes positional RoPE relocation, not semantic correction. Wall time includes donor construction, not serving speedup."}
@@ -243,9 +266,10 @@ def main():
     print(f"[ready] pairs={len(selected)} methods={','.join(methods)} batch={args.batch_size} "
           f"verify_per_type={args.verify_per_type} save_every={args.save_every}", flush=True)
 
-    with raw_batch_adapter(batch), batch.torch.inference_mode():
+    with raw_batch_adapter(batch, suffix if "reuse" in methods else ""), batch.torch.inference_mode():
         for start in range(0, len(selected), args.batch_size):
             chunk = selected[start:start + args.batch_size]
+            batch.torch.cuda.reset_peak_memory_stats()
             chunk_started = time.perf_counter()
             values = evaluate_chunk(batch, model, tokenizer, chunk, methods, args.max_new_tokens, timing,
                                     args.reuse_engine, reuse_phases)
@@ -293,7 +317,9 @@ def main():
                 save_report(args.output, config, results, verification, timing, False)
             # Report only this batch, not a rescan of every previous result.
             scores = " ".join(f"{method}={sum(x['correct'] for x in values[method])}/{len(values[method])}" for method in methods)
-            print(f"[{start + len(chunk)}/{len(selected)} pairs] {scores} elapsed={time.perf_counter() - chunk_started:.2f}s", flush=True)
+            memory = cuda_memory_gib()
+            print(f"[{start + len(chunk)}/{len(selected)} pairs] {scores} elapsed={time.perf_counter() - chunk_started:.2f}s "
+                f"peak={memory.get('allocated_gib', 0):.1f}/{memory.get('reserved_gib', 0):.1f}GiB", flush=True)
     timing["wall_before_final_save"] = time.perf_counter() - started
     if reuse_phases is not None:
         timing["cache_build_donor_prefill"] = reuse_phases["donor_prefill"]

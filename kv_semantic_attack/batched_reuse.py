@@ -9,7 +9,12 @@ import torch
 
 
 def _raw_prefill(batch: Any, model: Any, ids_list: list[torch.Tensor]):
-    """Prefill once and retain only the batched cache, never per-row clones."""
+    """Prefill once and retain only the batched KV, never CausalLM logits.
+
+    Calling ``AutoModelForCausalLM`` materializes a $B×L×V$ logits tensor even
+    though donor and target-prefix prefills never consume it. Use the decoder
+    backbone directly to avoid this substantial transient allocation.
+    """
     device = batch.base.input_device(model)
     lengths = torch.tensor([int(ids.numel()) for ids in ids_list], device=device)
     width = int(lengths.max().item())
@@ -21,8 +26,8 @@ def _raw_prefill(batch: Any, model: Any, ids_list: list[torch.Tensor]):
         input_ids[row, width - length:] = ids.to(device)
         attention[row, width - length:] = 1
         positions[row, width - length:] = torch.arange(length, device=device)
-    output = model(input_ids=input_ids, attention_mask=attention, position_ids=positions,
-                   cache_position=torch.arange(width, device=device), use_cache=True, return_dict=True)
+    output = model.model(input_ids=input_ids, attention_mask=attention, position_ids=positions,
+                         cache_position=torch.arange(width, device=device), use_cache=True, return_dict=True)
     # Match the reference runner: detach cache tensors from the model output
     # before freeing it. This is one batch-level copy, not a list of row-level
     # copies, and avoids cache storage aliasing across forward calls.
@@ -169,12 +174,16 @@ def _forward_suffix(batch: Any, model: Any, mixed_layers, logical_lengths, suffi
     for row, length in enumerate(logical_lengths.tolist()):
         attention[row, maximum_past - length:maximum_past] = 1
         attention[row, maximum_past:] = suffix_mask[row]
-    output = model(input_ids=input_ids, attention_mask=attention, position_ids=positions,
-                   cache_position=torch.arange(maximum_past, maximum_past + width, device=device),
-                   past_key_values=batch.make_batch_cache(model, mixed_layers), use_cache=True, return_dict=True)
+    # As above, avoid an unnecessary B×suffix_width×vocab logits allocation.
+    # Only the last active hidden state needs projection for greedy decoding.
+    output = model.model(input_ids=input_ids, attention_mask=attention, position_ids=positions,
+                         cache_position=torch.arange(maximum_past, maximum_past + width, device=device),
+                         past_key_values=batch.make_batch_cache(model, mixed_layers), use_cache=True, return_dict=True)
     last = suffix_lengths - 1
-    logits = output.logits[torch.arange(len(suffix_ids), device=device), last].detach().float()
+    hidden = output.last_hidden_state[torch.arange(len(suffix_ids), device=device), last]
+    logits = model.lm_head(hidden).detach().float()
     layers = batch.base.extract_cache_tensors(output.past_key_values, clone=False)
+    del output, hidden, input_ids, suffix_mask, positions, attention
     return logits, layers, logical_lengths + suffix_lengths
 
 
