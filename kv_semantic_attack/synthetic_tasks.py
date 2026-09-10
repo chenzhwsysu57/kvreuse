@@ -38,6 +38,7 @@ TASK_TYPES = {
 }
 LAYOUTS = ("table", "json", "lines")
 QUESTION = "Select the option whose payload is the answer required by the task. Return only its option letter."
+DIRECT_OPTION_QUESTION = "Return only one option letter (A-D)."
 PREAMBLES = (
     "Your task for the shared data below is as follows. ",
     "Process the following shared data using this rule: ",
@@ -219,6 +220,80 @@ def render_instruction(rule: dict[str, Any], style: int) -> str:
     return PREAMBLES[style] + text + " Do not add an explanation, markdown fences, or an answer wrapper."
 
 
+def render_direct_option_instruction(rule: dict[str, Any], style: int) -> str:
+    """Render a format task whose primary objective is selecting an option.
+
+    Unlike the original format-switch prompt, this never instructs the model to
+    emit an intermediate JSON/CSV payload. It removes the raw-output to option
+    conversion as a confound while retaining the JSON-versus-CSV task conflict.
+    """
+    if rule["op"] != "format":
+        raise ValueError("direct option instruction is currently defined only for format rules")
+    format_description = (
+        'the compact JSON object with keys "id" then "value"; id is a string and value is an integer, with no whitespace'
+        if rule["format"] == "json" else
+        "the two CSV lines with header id,value followed by the extracted values, with no spaces"
+    )
+    return (
+        PREAMBLES[style]
+        + f"For row {rule['target_id']}, select the option whose payload is {format_description}. "
+        "Return only its option letter. Do not add an explanation, markdown fences, or an answer wrapper."
+    )
+
+
+def render_semantic_objective(rule: Mapping[str, Any]) -> str:
+    """Restate only the task meaning, never its obsolete raw-output protocol.
+
+    Synthetic prompts first request a raw result and later request its option
+    letter. This is deliberately separate from ``render_instruction`` so a
+    post-block bridge cannot revive the conflicting raw-result format.
+    """
+    op = rule["op"]
+    if op == "select":
+        scope = "all rows"
+        if "filter" in rule:
+            field, value = rule["filter"]
+            scope = f"only rows whose {field} is {value}"
+        if "scope" in rule:
+            scope = f"only the {rule['scope']} half of the rows, in displayed order"
+        direction = "smallest" if rule["order"] == "min" else "largest"
+        text = f"Consider {scope}. Identify the row with the {direction} {rule['fields'][0]}"
+        for field in rule["fields"][1:]:
+            text += f", breaking ties by the {direction} {field}"
+        return text + "."
+    if op == "aggregate":
+        return (f"Compute the sum of the {rule['field']} column over all rows."
+                if rule["mode"] == "sum" else "Count the data rows, excluding headers.")
+    if op == "sort":
+        return f"Sort all rows by {rule['field']} in {'descending' if rule['descending'] else 'ascending'} numeric order."
+    if op == "sum_numbers":
+        return "Evaluate the addition expression."
+    if op == "extract_numbers":
+        return "Extract the integer operands of the expression in their original order; do not calculate the sum."
+    if op == "label":
+        return (f"For row {rule['target_id']}, determine whether value is at least {rule['threshold']}; "
+                f"use {rule['true_label']} if true and {rule['false_label']} otherwise.")
+    if op == "format":
+        return f"Extract id and value from row {rule['target_id']} and represent them as {rule['format'].upper()}."
+    if op == "case":
+        return f"Read the name of row {rule['target_id']} and convert it to {rule['case']}case."
+    if op == "set":
+        relation = "intersection" if rule["relation"] == "intersection" else "items in the first set but not the second"
+        return f"Compute the {relation} of sets {rule['left_name']} and {rule['right_name']}."
+    if op == "logic":
+        condition = "both p and q are true" if rule["operator"] == "and" else "p is true and q is false"
+        return f"Identify the unique row where {condition}."
+    if op == "lookup":
+        return (f"Look up code {rule['query']} and identify its corresponding name."
+                if rule["direction"] == "code_to_name" else
+                f"Look up name {rule['query']} and identify its corresponding code.")
+    if op == "count_property":
+        return f"Count rows whose {rule['field']} is {rule['value']}."
+    if op == "consistency":
+        return f"Identify the unique row whose left and right codes differ in exactly {rule['mismatches']} character(s)."
+    raise ValueError(f"unknown operation: {op}")
+
+
 def _select(field: str, order: str = "max", **extra: Any) -> dict[str, Any]:
     return {"op": "select", "fields": [field], "order": order, **extra}
 
@@ -339,11 +414,18 @@ def validate_generated_record(record: Mapping[str, Any]) -> None:
         raise ValueError("shared block does not match structured data")
     if record["shared_data_id"] != _digest(meta["data"]):
         raise ValueError("shared_data_id mismatch")
-    if record["question"] != QUESTION:
-        raise ValueError("question must not override the prefix instruction")
+    protocol = meta.get("prompt_protocol", "raw_payload_then_option")
+    if protocol not in {"raw_payload_then_option", "direct_option_format"}:
+        raise ValueError("unknown prompt protocol")
+    expected_question = DIRECT_OPTION_QUESTION if protocol == "direct_option_format" else QUESTION
+    if record["question"] != expected_question:
+        raise ValueError("question does not match the prompt protocol")
     for side in ("a", "b"):
         rule = meta[f"rule_{side}"]
-        if record[f"prefix_{side}"] != render_instruction(rule, meta["instruction_style"]):
+        expected_prefix = (render_direct_option_instruction(rule, meta["instruction_style"])
+                           if protocol == "direct_option_format" else
+                           render_instruction(rule, meta["instruction_style"]))
+        if record[f"prefix_{side}"] != expected_prefix:
             raise ValueError(f"prefix_{side} does not match its rule")
         answer = solve(meta["data"], rule)
         if answer not in meta["data"]["option_values"]:
@@ -357,6 +439,7 @@ def generate_tasks(
     counts: Mapping[str, int], *, seed: int = 20260906,
     min_rows: int = 4, max_rows: int = 12,
     layouts: tuple[str, ...] = LAYOUTS,
+    prompt_protocol: str = "raw_payload_then_option",
     max_attempts: int = 100,
 ) -> Iterator[dict[str, Any]]:
     """Generate requested counts, deterministic per type/index and seed.
@@ -374,6 +457,10 @@ def generate_tasks(
         raise ValueError("row bounds must satisfy 4 <= min_rows <= max_rows <= 100")
     if not layouts or any(layout not in LAYOUTS for layout in layouts):
         raise ValueError(f"layouts must be chosen from {LAYOUTS}")
+    if prompt_protocol not in {"raw_payload_then_option", "direct_option_format"}:
+        raise ValueError("unknown prompt protocol")
+    if prompt_protocol == "direct_option_format" and set(counts) - {"format_switch"}:
+        raise ValueError("direct_option_format currently supports only format_switch")
     if max_attempts < 1:
         raise ValueError("max_attempts must be positive")
     seen: set[str] = set()
@@ -411,7 +498,7 @@ def generate_tasks(
                 # Expression rendering has a single meaningful layout.
                 render_layout = "lines" if layout == "expression" else layout
                 style = rng.randrange(len(PREAMBLES))
-                task_id = f"synthetic-{task_type}-{_digest([sample_seed, data, a, b, render_layout, style])[:20]}"
+                task_id = f"synthetic-{task_type}-{_digest([GENERATOR_VERSION, prompt_protocol, sample_seed, data, a, b, render_layout, style])[:20]}"
                 dimension, _ = TASK_TYPES[task_type]
                 record = {
                     "task_id": task_id, "case_id": task_id,
@@ -419,16 +506,20 @@ def generate_tasks(
                     "attack_type": task_type, "dimension": dimension,
                     "tags": [dimension, task_type, "conflicting"],
                     "shared_data_id": group_id,
-                    "prefix_a": render_instruction(a, style),
-                    "prefix_b": render_instruction(b, style),
+                    "prefix_a": (render_direct_option_instruction(a, style)
+                                 if prompt_protocol == "direct_option_format" else render_instruction(a, style)),
+                    "prefix_b": (render_direct_option_instruction(b, style)
+                                 if prompt_protocol == "direct_option_format" else render_instruction(b, style)),
                     "shared_block": render_block(data, render_layout),
-                    "question": QUESTION, "gold_a": gold_a, "gold_b": gold_b,
+                    "question": DIRECT_OPTION_QUESTION if prompt_protocol == "direct_option_format" else QUESTION,
+                    "gold_a": gold_a, "gold_b": gold_b,
                     "metric": "exact_match", "answer_mode": "raw",
                     "metadata": {
                         "generator_version": GENERATOR_VERSION, "seed": seed,
                         "sample_index": index, "generation_attempt": attempt,
                         "num_rows": n, "layout": render_layout,
                         "instruction_style": style, "data": data,
+                        "prompt_protocol": prompt_protocol,
                         "rule_a": a, "rule_b": b,
                         "requires_raw_output": True,
                     },

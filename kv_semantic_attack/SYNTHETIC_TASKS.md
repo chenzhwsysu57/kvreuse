@@ -193,7 +193,73 @@ python kv_semantic_attack/run_multi_gpu_defense.py \
 因此一旦已占有一个 slot，就按用户授权填满该 GPU 的剩余 slot。每个 job 的终端输出保存在 `output-dir/logs/`，
 结果和 GPU、退出状态、耗时保存在 `dispatch_manifest.json`。
 
-## 测试
+## 固定攻击池的五轮防御优化
+
+入口为 [run_defense_refinement.py](run_defense_refinement.py)。本次改动只完善流程，
+没有自动运行新 API 请求或模型实验。
+
+### 防御者的任务边界
+
+实际顺序为 **target prefix → source-conditioned shared-block KV → suffix → question**。
+目标任务规则位于 target prefix；question 可能只要求返回选项字母。因此 suffix 必须保留
+当前目标规则，不能宣称所有前置指令失效、只有后续 question 才定义任务。
+suffix 只是新增文本，不能声称已经清空、修改或重新计算共享 KV。
+诊断示例中的 gold 只供防御者分析，不得写入通用 suffix 或评测任务输入。
+
+每个候选仍采用 `candidate_id/reasoning/suffix` schema，英文 suffix 最多800字符。
+reasoning 应包括：观察证据、尚未证实的原因假设、相对历史方案的变化、预期修复和退化风险。
+不要求本地 no-reasoning 模型输出分析；防御 API 每个候选分配1200个输出 token 的总预算，
+例如4个候选使用 `max_tokens=4800`。客户端仍不开启 thinking。
+
+### 每轮反馈和选择
+
+- 默认 `--max-attempts 5`、每轮4个新候选；固定输入池，不同时更新攻击分布。
+- 失败反馈每轮按当前所选 suffix 的 **Full accuracy − Reuse accuracy** 降序排列类别，
+   差距相同时优先样本数较多者，再按类别名确定性排序。不用样本量重新加权差距。
+   `failure_priority` 显式列出类别、差距（百分点）、方向数和有效失败数，防御者须考虑小样本不确定性。
+- 当前所选候选每类默认最多6个 Full正确、Reuse错误案例；两个方向均足够时各3个，
+   不足时由其他方向补足。类内兼顾资料布局、共享文本长度（500字符分桶）和源答案泄漏/其他错误，
+   按 task_id/target 去重，采样不依赖输入排列。保留全部类别统计，不丢弃低差距类别。
+- 历史候选也按各自差距排序抽取修复/退化/持续失败案例，分别保留各类变化的预算；
+   退化案例不会因其类别差距低而全部被持续失败案例挤掉。持续失败示例仅取Full正确者，
+   变化总数仍统计所有方向。单个有效失败都是正确性从1降到0，不再虚构样本级准确率差距排序。
+- 每轮重新计算 Full、无防御 Reuse、新候选及当前历史最佳，保证相同评测配置下比较。
+- 下一轮收到 `refinement_history`：所有历史候选全文、设计理由、整体/分类型指标、
+   相对无防御和 incumbent 的修复/退化数，以及每候选每比较对象每种变化最多2个案例。
+   所有失败候选也保留，不只反馈胜出者；案例标明 Full 是否正确，避免混淆任务难度与复用失败。
+- 小于3个百分点的改善也保留为下一轮 incumbent；阈值不阻止搜索更新。
+- `--minimum-improvement-pp 3` 表示最终目标：相对第1轮在本配置实测的初始 incumbent，
+   累计提升至少3个百分点。默认即使达标仍跑满5轮；仅显式 `--stop-on-threshold` 才提前退出。
+- 每轮新候选允许1–7个，为重测 incumbent 预留第8个位置。
+- run-dir 必须新建或为空；原始 API 候选文件不被补入 incumbent 的操作改写，另存
+   `refine_NN_evaluated_suffixes.json`，保持 step manifest 引用的哈希有效。
+- 最后写 `refinement_summary.json` 及 `accepted_suffix.json` 或 `refinement_stopped.json`。
+   每轮 dashboard 含完整搜索历史，可供检查和后续设计；不自动续跑已有目录。
+
+五轮入口可传 `--gpu-slots 1=2 2=2 3=2`，每轮调用多 GPU 调度器；省略时保持单进程评测。
+每轮4个新候选加Full和无防御Reuse为6个任务；需要额外重测incumbent时第7个任务排队，
+始终不超过每卡2任务。轮次仍串行推进，上一轮完整反馈产生后才生成下一轮候选。
+`run_multi_gpu_defense.py --output ...` 会验证6/7份结果的配置、输入指纹、候选文本和方向覆盖，
+生成五轮反馈所需的统一evaluation；任何任务失败或合并验证失败不会进入下一轮。
+
+本机一键入口：[../scripts/run_defense5_gpu123.sh](../scripts/run_defense5_gpu123.sh)。固定GPU1/2/3各2槽、
+Qwen3-1.7B、no-reasoning、batch=8、128新token，使用已有1000对池。先重测旧4个候选，
+通过 `build_adaptive_dashboard.py --include-candidate-feedback` 写入第0轮历史，再跑满5轮新候选。
+可用 `RUN_DIR` 指定新运行目录（拒绝覆盖），`PYTHON` 指定解释器，`INPUT/CANDIDATES` 指定输入；
+每张卡空闲时默认要求外部显存占用不超过4GiB，否则等待。输出目录内pipeline.log记录全流程，
+baseline_parallel和refinement/refine_NN_parallel保留逐任务日志。
+
+### 判分口径与数据隔离
+
+修复 `raw_result` 在第一个 token 后提前返回的问题：现在保留直到首个 EOS 的完整序列，
+并对完整解码文本提取答案，空输出也返回有效结果字典。旧产物不改写；开始新五轮前应使用
+修复后的判分重新评估基线，最好重新测旧候选以创建同口径初始历史。不要把旧首token得分
+和新完整答案得分直接混算。旧 dashboard 可作为注明来源的背景，但不是新的接受阈值基准。
+
+固定池结果只表示搜索集提升。五轮后应冻结最佳 suffix，再对未参与反馈的留出资料评测；
+留出集按 shared_data_id 分组，不将双向记录分到不同集合。本入口不自动构造留出集。
+
+## 离线回归测试
 
 ```sh
 python -m unittest discover -s kv_semantic_attack/tests -p 'test_synthetic_tasks.py' -v

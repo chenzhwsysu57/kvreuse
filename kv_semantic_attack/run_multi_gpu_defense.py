@@ -87,6 +87,7 @@ def launch(job: Job, gpu: int, args: argparse.Namespace, log_dir: Path) -> subpr
     path = log_dir / f"{job.name}.log"
     stream = path.open("w", encoding="utf-8")
     environment = os.environ.copy()
+    environment["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     environment["CUDA_VISIBLE_DEVICES"] = str(gpu)
     process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=stream, stderr=subprocess.STDOUT)
     process._kvreuse_stream = stream  # type: ignore[attr-defined]
@@ -100,6 +101,7 @@ def main() -> int:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--candidates", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--output", type=Path, help="optional joined evaluation for refinement feedback")
     parser.add_argument("--gpu-slots", nargs="+", required=True, metavar="GPU=SLOTS",
                         help="maximum concurrent jobs per GPU, e.g. 0=2 1=1 2=2")
     parser.add_argument("--max-used-gib", type=float, default=4.0,
@@ -107,13 +109,14 @@ def main() -> int:
     parser.add_argument("--model", choices=("0.6b", "1.7b", "4b", "8b"), default="1.7b")
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--max-new-tokens", type=int, default=128)
-    parser.add_argument("--poll-seconds", type=float, default=2.0)
     parser.add_argument("--run-dir", type=Path)
     parser.add_argument("--step", type=int)
     args = parser.parse_args()
+    if args.output and args.output.exists():
+        parser.error(f"output already exists: {args.output}")
     if (args.run_dir is None) != (args.step is None):
         parser.error("--run-dir and --step must be provided together")
-    if args.batch_size < 1 or args.max_new_tokens < 1 or args.max_used_gib < 0 or args.poll_seconds <= 0:
+    if args.batch_size < 1 or args.max_new_tokens < 1 or args.max_used_gib < 0:
         parser.error("invalid batch, memory or polling setting")
     slots = parse_gpu_slots(args.gpu_slots)
     visible = gpu_usage()
@@ -122,7 +125,7 @@ def main() -> int:
         parser.error(f"requested GPU(s) not found: {sorted(missing)}; visible: {sorted(visible)}")
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         parser.error(f"output directory is not empty: {args.output_dir}")
-    args.output_dir.mkdir(parents=True)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
     suffixes = materialize(args.candidates, args.output_dir / "suffixes")
     jobs = deque([Job("full", "full", None, args.output_dir / "full.json"),
                   Job("direct_reuse", "reuse", None, args.output_dir / "direct_reuse.json"),
@@ -160,16 +163,34 @@ def main() -> int:
             while jobs and len(active[gpu]) < maximum:
                 job = jobs.popleft()
                 active[gpu].append((job, launch(job, gpu, args, logs)))
-        if jobs or any(active.values()):
-            time.sleep(args.poll_seconds)
+        if any(active.values()):
+            # Block until an actual worker state transition. This is deliberately
+            # event-driven: do not sleep/poll while GPUs are busy. The next loop
+            # observes the exited child, releases its slot, and immediately starts
+            # the next queued job for that GPU.
+            os.wait()
+        elif jobs:
+            # All requested GPUs were externally busy before a worker launched;
+            # without an owned child there is no completion event to wait for.
+            # Refuse rather than silently spin or use timed polling.
+            blocked = {gpu: usage[gpu][0] for gpu in slots}
+            raise RuntimeError(
+                "no scheduler slot could launch because every requested GPU exceeds "
+                f"--max-used-gib; current used MiB: {blocked}"
+            )
     manifest = {"input": file_ref(args.input), "candidates": file_ref(args.candidates),
                 "gpu_slots": slots, "max_used_gib": args.max_used_gib, "model": args.model,
                 "batch_size": args.batch_size, "max_new_tokens": args.max_new_tokens, "jobs": completed}
     manifest_path = args.output_dir / "dispatch_manifest.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    merged_ref = {}
+    if args.output:
+        from kv_semantic_attack.merge_parallel_defense import write_merged
+        write_merged(args.output_dir, args.input, args.candidates, args.output)
+        merged_ref["evaluation"] = file_ref(args.output)
     if args.run_dir:
         step_manifest = write_step(args.run_dir, args.step, "multi_gpu_defense_dispatch", {
-            **manifest, "dispatch_manifest": file_ref(manifest_path),
+            **manifest, "dispatch_manifest": file_ref(manifest_path), **merged_ref,
         })
         print(f"step_manifest: {step_manifest}")
     print(json.dumps(manifest, ensure_ascii=False, indent=2))

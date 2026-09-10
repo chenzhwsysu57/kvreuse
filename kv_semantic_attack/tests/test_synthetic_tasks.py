@@ -10,7 +10,7 @@ from collections import Counter
 from pathlib import Path
 
 from kv_semantic_attack.synthetic_tasks import (
-    LAYOUTS, TASK_TYPES, generate_tasks, render_block, score_response, solve,
+    DIRECT_OPTION_QUESTION, LAYOUTS, TASK_TYPES, generate_tasks, render_block, score_response, solve,
     validate_generated_record,
 )
 
@@ -146,6 +146,22 @@ class GeneratedDataTests(unittest.TestCase):
             for record in records:
                 validate_generated_record(record)
                 self.assertEqual(record["metadata"]["num_rows"], 4)
+
+    def test_direct_option_format_control_has_no_raw_output_instruction(self):
+        records = list(generate_tasks({"format_switch": 20}, seed=81, prompt_protocol="direct_option_format"))
+        self.assertEqual(len(records), 20)
+        for record in records:
+            validate_generated_record(record)
+            self.assertEqual(record["question"], DIRECT_OPTION_QUESTION)
+            self.assertEqual(record["metadata"]["prompt_protocol"], "direct_option_format")
+            for side in ("a", "b"):
+                prefix = record[f"prefix_{side}"]
+                self.assertIn("select the option whose payload", prefix.lower())
+                self.assertIn("return only its option letter", prefix.lower())
+                self.assertNotIn("output a compact", prefix.lower())
+                self.assertNotIn("output exactly two", prefix.lower())
+        with self.assertRaises(ValueError):
+            list(generate_tasks({"format_switch": 1, "field_switch": 1}, prompt_protocol="direct_option_format"))
 
 
 class OracleTests(unittest.TestCase):

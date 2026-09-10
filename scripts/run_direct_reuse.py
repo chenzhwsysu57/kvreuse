@@ -762,7 +762,7 @@ def main() -> int:
     parser.add_argument(
         "--method", choices=(
             "all", "full", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute",
-            "ours_repeat_txt", "ours_repeat_kv",
+            "ours_repeat_txt", "ours_repeat_kv", "ours_tail16_kv_post",
         ), default="all",
         help="Generate dense full outputs, source-prefixed RoPE cross-reuse, or clean-block RoPE reuse. "
              "clean_reuse encodes the shared block with no prefix at all. tail16_recompute reuses the "
@@ -770,6 +770,8 @@ def main() -> int:
              "target cache. tail16_post_recompute additionally inserts a target-task restatement after "
              "the block. ours_repeat_txt repeats the complete target prefix after the block as text; "
              "ours_repeat_kv appends that target-prefix cache after the transplanted block with RoPE "
+             "relocation. ours_tail16_kv_post appends only the final 16 target-prefix KV tokens, while "
+             "a post-block prompt remains text-only. "
              "relocation. Reuse-only modes still perform "
              "non-generative target full forwards for reference logits and KV similarity.",
     )
@@ -842,13 +844,14 @@ def main() -> int:
     run_full = args.method in {"all", "full"}
     run_reuse = args.method in {
         "all", "reuse", "clean_reuse", "tail16_recompute", "tail16_post_recompute",
-        "ours_repeat_txt", "ours_repeat_kv",
+        "ours_repeat_txt", "ours_repeat_kv", "ours_tail16_kv_post",
     }
     clean_reuse = args.method == "clean_reuse"
     tail16_recompute = args.method in {"tail16_recompute", "tail16_post_recompute"}
     post_restatement = args.method == "tail16_post_recompute"
     repeat_prefix_text = args.method == "ours_repeat_txt"
     repeat_prefix_kv = args.method == "ours_repeat_kv"
+    repeat_prefix_tail_kv = args.method == "ours_tail16_kv_post"
     run_config = {
         "experiment": "direct_shared_block_kv_reuse",
         "method": args.method,
@@ -879,6 +882,7 @@ def main() -> int:
         "post_task_restatement": post_restatement,
         "repeat_target_prefix_text": repeat_prefix_text,
         "repeat_target_prefix_kv": repeat_prefix_kv,
+        "repeat_target_prefix_tail_kv_tokens": 16 if repeat_prefix_tail_kv else 0,
         "repeat_target_prefix_kv_rope": (
             "inverse_source_then_apply_target_at_prefix_plus_block" if repeat_prefix_kv else None
         ),
@@ -1061,16 +1065,20 @@ def main() -> int:
                 mixed = splice_prefix_block(target_prefixes[target], relocated)
             repeated_prefix_tokens = 0
             repeated_prefix_start = None
-            if repeat_prefix_kv:
+            if repeat_prefix_kv or repeat_prefix_tail_kv:
                 # target_prefixes[target] was encoded at positions 0..P-1.
                 # It is now appended after target-prefix + transplanted-block,
                 # so its post-RoPE Keys must move to P+B..P+B+P-1. Values are
                 # position-independent and are copied by relocate_block.
                 repeated_prefix_start = mixed[0][0].shape[-2]
+                prefix_length = parts[target].prefix_ids.numel()
+                prefix_tail_tokens = min(16, prefix_length) if repeat_prefix_tail_kv else prefix_length
+                prefix_source_start = prefix_length - prefix_tail_tokens
                 repeated_prefix = relocate_block(
-                    model, target_prefixes[target], 0, repeated_prefix_start
+                    model, slice_cache(target_prefixes[target], prefix_source_start, prefix_length),
+                    prefix_source_start, repeated_prefix_start,
                 )
-                repeated_prefix_tokens = parts[target].prefix_ids.numel()
+                repeated_prefix_tokens = prefix_tail_tokens
                 mixed = splice_prefix_block(mixed, repeated_prefix)
                 del repeated_prefix
             logits, prompt_layers = forward_suffix(model, mixed, parts[target].suffix_ids)

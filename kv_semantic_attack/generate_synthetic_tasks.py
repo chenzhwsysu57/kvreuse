@@ -26,6 +26,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-rows", type=int, default=4)
     parser.add_argument("--max-rows", type=int, default=12)
     parser.add_argument("--layouts", nargs="+", choices=LAYOUTS, default=list(LAYOUTS))
+    parser.add_argument("--direct-option-format-switch", action="store_true",
+                        help="clean control: format_switch prefix directly selects JSON/CSV option, never a raw payload")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "kv_semantic_attack/generated_tasks")
     parser.add_argument("--overwrite", action="store_true", help="replace a previous generator output (refuses unrelated files)")
     parser.add_argument("--list-types", action="store_true")
@@ -47,6 +49,8 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(f"invalid --count {entry!r}; use a selected TYPE and a non-negative integer")
     if not sum(counts.values()):
         parser.error("at least one pair must be requested")
+    if args.direct_option_format_switch and set(counts) != {"format_switch"}:
+        parser.error("--direct-option-format-switch requires --types format_switch")
 
     output = args.output_dir
     if output.exists() and not output.is_dir():
@@ -60,7 +64,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         records = list(generate_tasks(counts, seed=args.seed, min_rows=args.min_rows,
-                                      max_rows=args.max_rows, layouts=tuple(args.layouts)))
+                                      max_rows=args.max_rows, layouts=tuple(args.layouts),
+                                      prompt_protocol=("direct_option_format" if args.direct_option_format_switch
+                                                       else "raw_payload_then_option")))
     except (ValueError, RuntimeError) as exc:
         parser.error(str(exc))
 
@@ -80,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
         "pairs": len(records), "reuse_directions": 2 * len(records),
         "counts": counts, "min_rows": args.min_rows, "max_rows": args.max_rows,
         "layouts": args.layouts,
+        "prompt_protocol": "direct_option_format" if args.direct_option_format_switch else "raw_payload_then_option",
         "observed_layouts": dict(Counter(row["metadata"]["layout"] for row in records)),
         "unique_shared_data": len({row["shared_data_id"] for row in records}),
         "answer_mode": "raw", "split_group_key": "shared_data_id",

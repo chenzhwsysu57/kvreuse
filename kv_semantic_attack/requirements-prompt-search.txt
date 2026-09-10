@@ -1,0 +1,2 @@
+# Additional dependency; use the main KV-reuse environment, not RelayCaching.
+optuna>=4.0,<5

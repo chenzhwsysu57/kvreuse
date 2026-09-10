@@ -1,5 +1,12 @@
 # KV semantic attack
 
+## 独立 prompt 搜索（不使用攻防流程）
+
+“目标原 prefix 的压缩/完整重述 + 通用提示”的 TPE 与随机搜索入口为
+`kv_semantic_attack.run_prompt_search`。支持分组 search/validation/test、
+评估缓存和断点恢复，详见 [PROMPT_SEARCH.md](PROMPT_SEARCH.md)。
+以下内容保留为旧攻防流程说明，新搜索不经过这些角色或自博弈步骤。
+
 本目录实现 `docs/*.txt` 中描述的攻防闭环：Attacker 生成一组
 `reasoning`（仅用于记录出题前分析）和
 `prefix_a/prefix_b/shared_block/question/gold_a/gold_b`；Executor 执行两个

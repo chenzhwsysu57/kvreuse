@@ -69,7 +69,10 @@ def _relocate_keys(batch: Any, model: Any, keys: torch.Tensor, valid: torch.Tens
 
 
 def _assemble_mixed(batch: Any, model: Any, source_layers, source_lengths, source_width,
-                    target_layers, target_lengths, target_width, source_parts, target_parts):
+                    target_layers, target_lengths, target_width, source_parts, target_parts,
+                    tail_recompute_tokens: int = 0, replay_target_prefix_kv: bool = False):
+    if tail_recompute_tokens or replay_target_prefix_kv:
+        raise ValueError("Tail recomputation and target-prefix KV replay require scatter assembly")
     device = source_lengths.device
     block_starts = torch.tensor([part.block_token_start for part in source_parts], device=device)
     block_ends = torch.tensor([part.block_token_end for part in source_parts], device=device)
@@ -113,7 +116,9 @@ def _scatter_indices(lengths: torch.Tensor, maximum: int, *, offset: int = 0):
 
 
 def _assemble_mixed_scatter(batch: Any, model: Any, source_layers, source_lengths, source_width,
-                            target_layers, target_lengths, target_width, source_parts, target_parts):
+                            target_layers, target_lengths, target_width, source_parts, target_parts,
+                            tail_recompute_tokens: int = 0,
+                            replay_target_prefix_kv: bool = False):
     """Assemble each layer through two batch-wide scatter operations.
 
     This removes the per-row Python writes used by ``_assemble_mixed``. The
@@ -124,11 +129,13 @@ def _assemble_mixed_scatter(batch: Any, model: Any, source_layers, source_length
     block_starts = torch.tensor([part.block_token_start for part in source_parts], device=device)
     block_ends = torch.tensor([part.block_token_end for part in source_parts], device=device)
     block_lengths = block_ends - block_starts
+    reused_lengths = torch.clamp(block_lengths - tail_recompute_tokens, min=0)
     prefix_lengths = torch.tensor([int(part.prefix_ids.numel()) for part in target_parts], device=device)
-    logical_lengths = prefix_lengths + block_lengths
+    replay_lengths = prefix_lengths if replay_target_prefix_kv else torch.zeros_like(prefix_lengths)
+    logical_lengths = prefix_lengths + reused_lengths + replay_lengths
     maximum_length = int(logical_lengths.max().item())
     max_prefix = int(prefix_lengths.max().item())
-    max_block = int(block_lengths.max().item())
+    max_block = int(reused_lengths.max().item())
     prefix_destination, _ = _scatter_indices(prefix_lengths, max_prefix, offset=maximum_length - max_prefix)
     # Prefix begins at each row's left-padded logical start, not at a shared offset.
     prefix_destination = maximum_length - logical_lengths[:, None] + torch.arange(max_prefix, device=device)[None, :]
@@ -136,15 +143,20 @@ def _assemble_mixed_scatter(batch: Any, model: Any, source_layers, source_length
     prefix_destination = torch.where(prefix_valid, prefix_destination,
                                      torch.full_like(prefix_destination, maximum_length))
     block_destination = maximum_length - logical_lengths[:, None] + prefix_lengths[:, None] + torch.arange(max_block, device=device)[None, :]
-    block_valid_destination = torch.arange(max_block, device=device)[None, :] < block_lengths[:, None]
+    block_valid_destination = torch.arange(max_block, device=device)[None, :] < reused_lengths[:, None]
     block_destination = torch.where(block_valid_destination, block_destination,
                                     torch.full_like(block_destination, maximum_length))
+    replay_destination = (maximum_length - logical_lengths[:, None] + prefix_lengths[:, None]
+                          + reused_lengths[:, None] + torch.arange(max_prefix, device=device)[None, :])
+    replay_valid = torch.arange(max_prefix, device=device)[None, :] < replay_lengths[:, None]
+    replay_destination = torch.where(replay_valid, replay_destination,
+                                     torch.full_like(replay_destination, maximum_length))
     mixed = []
     for (source_key, source_value), (target_key, target_value) in zip(source_layers, target_layers):
         prefix_key, _ = _gather_span(target_key, target_lengths, torch.zeros_like(prefix_lengths), prefix_lengths, target_width)
         prefix_value, _ = _gather_span(target_value, target_lengths, torch.zeros_like(prefix_lengths), prefix_lengths, target_width)
-        block_key, block_valid = _gather_span(source_key, source_lengths, block_starts, block_lengths, source_width)
-        block_value, _ = _gather_span(source_value, source_lengths, block_starts, block_lengths, source_width)
+        block_key, block_valid = _gather_span(source_key, source_lengths, block_starts, reused_lengths, source_width)
+        block_value, _ = _gather_span(source_value, source_lengths, block_starts, reused_lengths, source_width)
         block_key = _relocate_keys(batch, model, block_key, block_valid, block_starts, prefix_lengths)
         shape = (source_key.shape[0], source_key.shape[1], maximum_length + 1, source_key.shape[-1])
         key = torch.zeros(shape, dtype=source_key.dtype, device=device)
@@ -153,6 +165,14 @@ def _assemble_mixed_scatter(batch: Any, model: Any, source_layers, source_length
         block_index = block_destination[:, None, :, None].expand(-1, key.shape[1], -1, key.shape[-1])
         key.scatter_(2, prefix_index, prefix_key).scatter_(2, block_index, block_key)
         value.scatter_(2, prefix_index, prefix_value).scatter_(2, block_index, block_value)
+        if replay_target_prefix_kv:
+            # The target prefix was originally encoded at positions 0..P-1.
+            # Replay it after target-prefix + reused block at P+B..P+B+P-1.
+            replay_key = _relocate_keys(batch, model, prefix_key, replay_valid,
+                                        torch.zeros_like(prefix_lengths), prefix_lengths + reused_lengths)
+            replay_index = replay_destination[:, None, :, None].expand(-1, key.shape[1], -1, key.shape[-1])
+            key.scatter_(2, replay_index, replay_key)
+            value.scatter_(2, replay_index, prefix_value)
         mixed.append((key[..., :maximum_length, :], value[..., :maximum_length, :]))
     return mixed, logical_lengths
 
@@ -188,7 +208,8 @@ def _forward_suffix(batch: Any, model: Any, mixed_layers, logical_lengths, suffi
 
 
 def reuse_rows_vectorized(batch: Any, model: Any, tokenizer: Any, rows, max_new_tokens: int,
-                          assembly: str = "loop", phase_timing: dict[str, float] | None = None):
+                          assembly: str = "loop", phase_timing: dict[str, float] | None = None,
+                          tail_recompute_tokens: int = 0, replay_target_prefix_kv: bool = False):
     """Direct reuse with batched relocation/splicing and no per-row KV clones."""
     target_parts, source_parts, records, sides = [], [], [], []
     for record, side in rows:
@@ -216,16 +237,26 @@ def reuse_rows_vectorized(batch: Any, model: Any, tokenizer: Any, rows, max_new_
     target_layers, target_lengths, target_width = measure(
         "target_prefix_prefill", lambda: _raw_prefill(batch, model, [part.prefix_ids for part in target_parts])
     )
+    if tail_recompute_tokens < 0:
+        raise ValueError("tail_recompute_tokens must be non-negative")
+    if assembly == "loop" and (tail_recompute_tokens or replay_target_prefix_kv):
+        raise ValueError("Tail recomputation and target-prefix KV replay require scatter assembly")
     assembler = _assemble_mixed if assembly == "loop" else _assemble_mixed_scatter if assembly == "scatter" else None
     if assembler is None:
         raise ValueError(f"unsupported assembly: {assembly}")
     mixed_layers, logical_lengths = measure(
         "relocate_and_splice", lambda: assembler(
             batch, model, source_layers, source_lengths, source_width, target_layers, target_lengths,
-            target_width, source_parts, target_parts,
+            target_width, source_parts, target_parts, tail_recompute_tokens, replay_target_prefix_kv,
         )
     )
     del source_layers, target_layers
+    if tail_recompute_tokens:
+        tail_ids = [part.block_ids[max(0, int(part.block_ids.numel()) - tail_recompute_tokens):]
+                    for part in target_parts]
+        _, mixed_layers, logical_lengths = measure(
+            "tail_recompute", lambda: _forward_suffix(batch, model, mixed_layers, logical_lengths, tail_ids)
+        )
     logits, layers, lengths = measure(
         "suffix_prefill", lambda: _forward_suffix(
             batch, model, mixed_layers, logical_lengths, [part.suffix_ids for part in target_parts]

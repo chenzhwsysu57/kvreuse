@@ -9,6 +9,7 @@ import json
 import sys
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,12 +34,13 @@ def _progress(phase: str, completed: int, total: int, started: float) -> None:
 
 
 def evaluate(model, tokenizer, records, *, suffix: str, batch_size: int, max_new_tokens: int,
-             reuse_engine: str, label: str, progress_every: int, empty_cache_every: int):
+             reuse_engine: str, label: str, progress_every: int, empty_cache_every: int,
+             prefix_prompt_builder: Callable[[str], str] | None = None):
     rows, elapsed = [], 0.0
     phases = {} if reuse_engine == "scatter" else None
     phase_started = time.perf_counter()
     print(f"[{label}] start: pairs={len(records)} batch={batch_size} suffix_chars={len(suffix)}", flush=True)
-    with raw_batch_adapter(batch, suffix), batch.torch.inference_mode():
+    with raw_batch_adapter(batch, suffix, prefix_prompt_builder=prefix_prompt_builder), batch.torch.inference_mode():
         for start in range(0, len(records), batch_size):
             chunk = records[start:start + batch_size]
             batch.torch.cuda.synchronize()
