@@ -1,0 +1,12 @@
+# Main training/inference environment: Python 3.10+.
+# Install a CUDA-enabled torch wheel suitable for your GPU/driver first.
+# These direct dependencies match the verified source environment.
+# RelayCaching uses requirements-relay.txt in a SEPARATE environment.
+torch==2.13.0
+transformers==5.15.0
+accelerate==1.14.0
+modelscope==1.39.1
+numpy==2.2.6
+tqdm==4.70.0
+safetensors==0.8.0
+matplotlib==3.10.9

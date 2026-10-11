@@ -1,0 +1,16 @@
+# Minimal Hugging Face / SDPA RelayCaching runner environment (Python 3.12).
+# Keep separate from requirements.txt: the Qwen3 hijack uses Transformers internals.
+# Torch/CUDA wheels must match the host driver; torchvision/torchaudio are not used.
+torch==2.6.0
+transformers==4.52.4
+accelerate==1.5.2
+numpy==1.26.4
+tenacity==8.2.3
+langchain==0.1.0
+class-registry==2.1.2
+loguru==0.7.2
+tqdm==4.66.1
+# Avoid datasets 5.x's requirement for NumPy 2.x in this older environment.
+datasets==3.6.0
+# run_relay_methods imports relay_deal_adapter, which imports ModelScope.
+modelscope==1.39.1
