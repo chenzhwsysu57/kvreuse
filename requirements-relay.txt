@@ -12,5 +12,5 @@ loguru==0.7.2
 tqdm==4.66.1
 # Avoid datasets 5.x's requirement for NumPy 2.x in this older environment.
 datasets==3.6.0
-# run_relay_methods imports relay_deal_adapter, which imports ModelScope.
+# Optional model provisioning via scripts/download_models.py.
 modelscope==1.39.1
