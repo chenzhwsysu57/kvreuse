@@ -359,6 +359,42 @@ def new_prepare_4d_causal_attention_mask_with_cache_position(
         causal_mask = attention_mask
     else:
         min_dtype = torch.finfo(dtype).min
+        if getattr(past_key_values, "batch_rowwise", False) and past_key_values.recompute_label:
+            recompute_idx = past_key_values.recompute_indices_by_row.to(cache_position.device)
+            recompute_valid = past_key_values.recompute_valid_by_row.to(cache_position.device)
+            correction_width = recompute_idx.shape[1]
+            append_positions = getattr(past_key_values, "append_physical_indices_by_row", None)
+            append_valid = getattr(past_key_values, "append_valid_by_row", None)
+            if append_positions is not None:
+                append_positions = append_positions.to(cache_position.device)
+                append_valid = append_valid.to(cache_position.device)
+                query_positions = torch.cat([past_key_values.query_physical_indices_by_row.to(cache_position.device), append_positions], dim=1)
+                query_valid = torch.cat([past_key_values.query_valid_by_row.to(cache_position.device), append_valid], dim=1)
+            elif sequence_length == correction_width:
+                # Direct correction forward: the batch runner bypasses
+                # ``generate`` and supplies only EPIC's selected queries.
+                query_positions, query_valid = recompute_idx, recompute_valid
+            else:
+                query_positions = torch.cat(
+                    [recompute_idx, cache_position.unsqueeze(0).expand(batch_size, -1)], dim=1
+                )
+                query_valid = torch.cat(
+                    [recompute_valid, torch.ones((batch_size, cache_position.numel()), dtype=torch.bool,
+                                                  device=cache_position.device)], dim=1
+                )
+            key_positions = torch.arange(target_length, device=cache_position.device)
+            causal_mask = torch.full(
+                (batch_size, 1, query_positions.shape[1], target_length), min_dtype,
+                dtype=dtype, device=cache_position.device,
+            )
+            permitted = key_positions[None, None, :] <= query_positions[:, :, None]
+            permitted &= query_valid[:, :, None]
+            if attention_mask is not None:
+                if attention_mask.shape[-1] > target_length:
+                    attention_mask = attention_mask[:, :target_length]
+                permitted[:, :, :attention_mask.shape[-1]] &= attention_mask[:, None, :].bool()
+            causal_mask.masked_fill_(permitted[:, None, :, :], 0)
+            return causal_mask
         causal_mask = torch.full(
             (sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=cache_position.device
         )
@@ -424,18 +460,24 @@ def prepare_inputs_for_generation_qwen3(
                 hasattr(past_key_values, "recompute_label")
                 and past_key_values.recompute_label
             ):
-                recompute_tensor = getattr(past_key_values, 'recompute_indices_tensor', None)
-                
-                if recompute_tensor is not None and recompute_tensor.numel() > 0:
-                    recompute_idx = recompute_tensor.to(dtype=torch.long, device=input_ids.device)
-                    cache_idx = cache_position.to(dtype=torch.long, device=input_ids.device)
-                    input_ids = torch.cat(
-                        [
-                            input_ids[:, recompute_idx],
-                            input_ids[:, cache_idx],
-                        ],
-                        dim=1,
+                if getattr(past_key_values, "batch_rowwise", False):
+                    recompute_idx = past_key_values.recompute_indices_by_row.to(
+                        dtype=torch.long, device=input_ids.device
                     )
+                    recompute_valid = past_key_values.recompute_valid_by_row.to(input_ids.device)
+                    gathered = torch.gather(input_ids, 1, recompute_idx)
+                    # Invalid padded correction slots are harmless only when
+                    # masked. Use token zero there; the row-wise causal mask
+                    # excludes them from every real query.
+                    gathered = gathered.masked_fill(~recompute_valid, 0)
+                    cache_idx = cache_position.to(dtype=torch.long, device=input_ids.device)
+                    input_ids = torch.cat([gathered, input_ids[:, cache_idx]], dim=1)
+                else:
+                    recompute_tensor = getattr(past_key_values, 'recompute_indices_tensor', None)
+                    if recompute_tensor is not None and recompute_tensor.numel() > 0:
+                        recompute_idx = recompute_tensor.to(dtype=torch.long, device=input_ids.device)
+                        cache_idx = cache_position.to(dtype=torch.long, device=input_ids.device)
+                        input_ids = torch.cat([input_ids[:, recompute_idx], input_ids[:, cache_idx]], dim=1)
             else:
                 input_ids = input_ids[:, cache_position]
 
@@ -447,19 +489,25 @@ def prepare_inputs_for_generation_qwen3(
                 hasattr(past_key_values, "recompute_label")
                 and past_key_values.recompute_label
             ):
-                recompute_tensor = getattr(past_key_values, 'recompute_indices_tensor', None)
-                
-                if recompute_tensor is not None and recompute_tensor.numel() > 0:
-                    index_tensor = recompute_tensor.to(device=input_ids.device, dtype=torch.long).unsqueeze(0)
-                    
-                    if index_tensor.shape[0] != position_ids.shape[0]:
-                         index_tensor = index_tensor.expand(position_ids.shape[0], -1)
-
-                    position_ids = torch.cat(
-                        [index_tensor, position_ids[:, -cache_position.shape[0] :]],
-                        dim=1,
+                if getattr(past_key_values, "batch_rowwise", False):
+                    recompute_idx = past_key_values.recompute_indices_by_row.to(
+                        device=input_ids.device, dtype=torch.long
                     )
-                    position_ids = position_ids.clone(memory_format=torch.contiguous_format)
+                    recompute_valid = past_key_values.recompute_valid_by_row.to(input_ids.device)
+                    correction_positions = torch.gather(position_ids, 1, recompute_idx)
+                    correction_positions = correction_positions.masked_fill(~recompute_valid, 1)
+                    position_ids = torch.cat(
+                        [correction_positions, position_ids[:, -cache_position.shape[0]:]], dim=1
+                    ).clone(memory_format=torch.contiguous_format)
+                else:
+                    recompute_tensor = getattr(past_key_values, 'recompute_indices_tensor', None)
+                    if recompute_tensor is not None and recompute_tensor.numel() > 0:
+                        index_tensor = recompute_tensor.to(device=input_ids.device, dtype=torch.long).unsqueeze(0)
+                        if index_tensor.shape[0] != position_ids.shape[0]:
+                            index_tensor = index_tensor.expand(position_ids.shape[0], -1)
+                        position_ids = torch.cat(
+                            [index_tensor, position_ids[:, -cache_position.shape[0]:]], dim=1
+                        ).clone(memory_format=torch.contiguous_format)
             else:
                 position_ids = position_ids[:, -input_ids.shape[1] :]
                 position_ids = position_ids.clone(memory_format=torch.contiguous_format)

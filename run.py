@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import signal
@@ -61,10 +62,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--method", required=True, choices=sorted(METHOD_ALIASES))
     parser.add_argument("--model", default="4b", choices=("0.6b", "1.7b", "4b", "8b"))
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--warmup-batches", type=int, default=0,
+                        help="untimed static Relay batches before inference timing")
     parser.add_argument("--reasoning", required=True, choices=("yes", "no"))
     parser.add_argument("--kv-mode", required=True, choices=("fulla", "fullb", "a2b", "b2a", "all"))
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--max-new-tokens", type=int)
+    parser.add_argument("--epic-prefix-tokens", type=int, default=16,
+                        help="number of relay tokens EPIC recomputes (EPIC only)")
+    parser.add_argument("--relay-execution-path", choices=("official-serial", "static-batched"),
+                        default="official-serial")
+    parser.add_argument("--relay-start-layer", type=int, default=0)
+    parser.add_argument("--relay-det-layer", type=int, default=0)
+    parser.add_argument("--relay-end-layer", type=int, default=-1)
+    parser.add_argument("--relay-tau-dev", type=float, default=0.0)
+    parser.add_argument("--relay-tau-inf", type=float, default=0.0)
+    parser.add_argument("--relay-suffix-tokens", type=int, default=0)
     parser.add_argument("--limit", type=int, help="cap paired source records after dataset selection")
     parser.add_argument("--verify-limit", type=int, default=0,
                         help="compare this many batched records with batch-size one")
@@ -84,6 +97,10 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.batch_size < 1 or (args.limit is not None and args.limit < 1):
         parser.error("batch-size and limit must be positive")
+    try:
+        validate_relay_args(args, METHOD_ALIASES[args.method])
+    except ValueError as error:
+        parser.error(str(error))
     if args.input_label is not None and args.input is None:
         parser.error("--input-label requires --input")
     if args.input is not None:
@@ -95,6 +112,42 @@ def parse_args() -> argparse.Namespace:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", args.input_label):
             parser.error("--input-label must be 1-64 safe characters, starting with a letter or digit")
     return args
+
+
+def validate_relay_args(args: argparse.Namespace, method: str) -> None:
+    """Reject ignored batching controls and invalid model-independent ranges."""
+    if args.max_new_tokens is not None and args.max_new_tokens < 1:
+        raise ValueError("--max-new-tokens must be positive")
+    if args.warmup_batches < 0:
+        raise ValueError("--warmup-batches must be non-negative")
+    if args.epic_prefix_tokens < 0 or args.relay_suffix_tokens < 0:
+        raise ValueError("--epic-prefix-tokens and --relay-suffix-tokens must be non-negative")
+    if args.relay_start_layer < 0 or args.relay_det_layer < args.relay_start_layer:
+        raise ValueError("Relay layers require 0 <= start-layer <= det-layer")
+    if args.relay_end_layer != -1 and args.relay_end_layer < args.relay_det_layer:
+        raise ValueError("--relay-end-layer must be -1 or >= det-layer")
+    if any(not math.isfinite(value) or value < 0
+           for value in (args.relay_tau_dev, args.relay_tau_inf)):
+        raise ValueError("Relay tau-dev/inf must be finite and non-negative")
+    relay_options_changed = (
+        args.relay_execution_path != "official-serial" or args.epic_prefix_tokens != 16
+        or args.relay_start_layer != 0 or args.relay_det_layer != 0
+        or args.relay_end_layer != -1 or args.relay_tau_dev != 0
+        or args.relay_tau_inf != 0 or args.relay_suffix_tokens != 0
+        or args.warmup_batches != 0
+    )
+    if method not in RELAY_METHODS:
+        if relay_options_changed:
+            raise ValueError("Relay options and --warmup-batches require relaycaching, cacheblend, or epic")
+        return
+    if args.batch_size < 1:
+        raise ValueError("--batch-size must be positive")
+    if method != "epic" and args.epic_prefix_tokens != 16:
+        raise ValueError("--epic-prefix-tokens is used only by --method epic")
+    if args.relay_execution_path == "official-serial":
+        if args.batch_size != 1 or args.warmup_batches != 0:
+            raise ValueError("official-serial requires --batch-size 1 and --warmup-batches 0; "
+                             "use --relay-execution-path static-batched for batching")
 
 
 def sha256(path: Path) -> str:
@@ -198,11 +251,21 @@ def build_command(
             command.append("--explicit-reasoning")
         return command
     if method in RELAY_METHODS:
+        validate_relay_args(args, method)
         command = [
             str(args.relay_python), "-u", str(RELAY_BATCH_RUNNER),
             "--method", method, "--model", args.model, "--input", str(input_path),
             "--output-root", str(run_dir / "artifacts"), "--limit", str(len(load_jsonl(input_path))),
-            "--max-new-tokens", str(max_tokens),
+            "--max-new-tokens", str(max_tokens), "--batch-size", str(args.batch_size),
+            "--warmup-batches", str(args.warmup_batches),
+            "--epic-prefix-tokens", str(args.epic_prefix_tokens),
+            "--execution-path", args.relay_execution_path,
+            "--start-layer", str(args.relay_start_layer),
+            "--det-layer", str(args.relay_det_layer),
+            "--end-layer", str(args.relay_end_layer),
+            "--tau-dev", str(args.relay_tau_dev),
+            "--tau-inf", str(args.relay_tau_inf),
+            "--suffix-tokens", str(args.relay_suffix_tokens),
             "--directions", *directions,
         ]
         if args.reasoning == "yes":
@@ -269,6 +332,15 @@ def main() -> int:
         "model": args.model, "batch_size": args.batch_size, "reasoning": args.reasoning,
         "kv_mode": args.kv_mode, "target_sides": target_sides, "directions": directions,
         "max_new_tokens": args.max_new_tokens or (4096 if args.reasoning == "yes" else 128),
+        "warmup_batches": args.warmup_batches,
+        "relay_execution_path": args.relay_execution_path,
+        "relay_start_layer": args.relay_start_layer,
+        "relay_det_layer": args.relay_det_layer,
+        "relay_end_layer": args.relay_end_layer,
+        "relay_tau_dev": args.relay_tau_dev,
+        "relay_tau_inf": args.relay_tau_inf,
+        "relay_suffix_tokens": args.relay_suffix_tokens,
+        "epic_prefix_tokens": args.epic_prefix_tokens,
         "baseline": str(args.baseline.resolve()) if args.baseline else None,
         "soft_prompt_checkpoint": (
             str(args.soft_prompt_checkpoint.resolve()) if args.soft_prompt_checkpoint else None

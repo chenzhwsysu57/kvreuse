@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple, Iterable, Dict
 import math
+import os
 
 import torch
 import torch.nn.functional as F
@@ -849,7 +850,7 @@ class RelayCache(Cache):
 
     def update_cache(self, key_states, value_states, layer_idx, cache_kwargs=None):
         num_recompute = self.recompute_indices_tensor.numel()
-        selected_key = key_states[..., :num_recompute, :] 
+        selected_key = key_states[..., :num_recompute, :]
         selected_value = value_states[..., :num_recompute, :]
         new_key_states = key_states[..., num_recompute:, :] 
         new_value_states = value_states[..., num_recompute:, :]
@@ -1069,7 +1070,7 @@ class RelayCache(Cache):
                 return
 
             old_value = self.value_cache[layer_idx][..., current_indices_tensor, :]
-            diff_score = torch.norm(selected_value - old_value, p=2, dim=-1)
+            diff_score = torch.norm(selected_value.float() - old_value.float(), p=2, dim=-1)
             token_diff_score = diff_score.mean(dim=(0, 1)) 
 
             self.key_cache[layer_idx][..., current_indices_tensor, :] = selected_key
@@ -1080,6 +1081,9 @@ class RelayCache(Cache):
             self.recompute_num = num_to_keep
             self.top_inner_relative = sorted_indices[:num_to_keep]
             self.top_inner_relative, _ = torch.sort(self.top_inner_relative)
+            if os.environ.get("CACHEBLEND_TRACE"):
+                logger.info("CACHEBLEND_SERIAL layer={} selected={}", layer_idx, self.top_inner_relative.tolist())
+                print(f"CACHEBLEND_SERIAL layer={layer_idx} selected={self.top_inner_relative.tolist()}", flush=True)
 
             all_inner_indices = torch.arange(num_current_indices, device=self.device)
             drop_mask = ~torch.isin(all_inner_indices, self.top_inner_relative)
@@ -1281,5 +1285,340 @@ class RelayCache(Cache):
         is_empty_layer = (len(self.key_cache) == 0 or len(self.key_cache) <= layer_idx or not self.key_cache[layer_idx].numel())
         layer_seq_length = self._seen_tokens if not is_empty_layer else 0
         return layer_seq_length
+
+
+class BatchedRelayCache(RelayCache):
+    """Relay cache with row-local positions for heterogeneous batched prefill.
+
+    ``RelayCache`` predates true model batching: its indices describe one
+    sequence and are consequently broadcast to every row.  This companion
+    cache keeps the physical, left-padded storage shared while retaining the
+    logical positions required by each row.  It is intentionally restricted to
+    EPIC's fixed-prefix correction policy; adaptive RelayCaching/CacheBlend
+    selection remains on the original single-sequence implementation.
+    """
+
+    def __init__(
+        self,
+        full_prefix_cache: DynamicCache,
+        *,
+        row_lengths: torch.Tensor,
+        recompute_indices: torch.Tensor,
+        recompute_valid: torch.Tensor,
+        relay_absolute_indices: torch.Tensor,
+        relay_valid: torch.Tensor,
+        blank_absolute_indices: torch.Tensor,
+        blank_valid: torch.Tensor,
+        query_physical_indices: Optional[torch.Tensor] = None,
+        query_valid: Optional[torch.Tensor] = None,
+        append_physical_indices: Optional[torch.Tensor] = None,
+        append_valid: Optional[torch.Tensor] = None,
+        execution_mode: str = "epic",
+        **kwargs,
+    ) -> None:
+        if execution_mode not in {"epic", "cacheblend", "relaycaching"}:
+            raise ValueError("BatchedRelayCache currently supports EPIC, CacheBlend, and static RelayCaching")
+        if row_lengths.dim() != 1:
+            raise ValueError("row_lengths must have shape [batch]")
+        batch_size = int(row_lengths.numel())
+        if full_prefix_cache.key_cache[0].shape[0] != batch_size:
+            raise ValueError("row_lengths batch size does not match prefix cache")
+        # Initialize the cache storage and common Cache interface. The legacy
+        # index values are deliberately empty: the overridden methods below
+        # exclusively use row-local fields.
+        super().__init__(
+            full_prefix_cache,
+            recompute_indices=[],
+            blank_absolute_indices=[],
+            blank_relative_indices=[],
+            relay_absolute_indices=[],
+            relay_relative_indices=[],
+            execution_mode=execution_mode,
+            **kwargs,
+        )
+        device = self.device
+        self.row_lengths = row_lengths.to(device=device, dtype=torch.long)
+        self.recompute_indices_by_row = recompute_indices.to(device=device, dtype=torch.long)
+        self.recompute_valid_by_row = recompute_valid.to(device=device, dtype=torch.bool)
+        self.relay_absolute_indices_by_row = relay_absolute_indices.to(device=device, dtype=torch.long)
+        self.relay_valid_by_row = relay_valid.to(device=device, dtype=torch.bool)
+        self.blank_absolute_indices_by_row = blank_absolute_indices.to(device=device, dtype=torch.long)
+        self.blank_valid_by_row = blank_valid.to(device=device, dtype=torch.bool)
+        if self.recompute_indices_by_row.shape != self.recompute_valid_by_row.shape:
+            raise ValueError("recompute indices and mask shapes differ")
+        self.recompute_label = bool(self.recompute_valid_by_row.any())
+        self.recompute_num = self.recompute_valid_by_row.sum(dim=1)
+        self.batch_rowwise = True
+        self._batch_cacheblend_selected = False
+        self._batch_cacheblend_prune_pending = False
+        self._batch_cacheblend_pack_queries = True
+        self._batch_active_indices = self.relay_absolute_indices_by_row
+        self._batch_active_valid = self.relay_valid_by_row
+        self.query_physical_indices_by_row = (
+            query_physical_indices.to(device=device, dtype=torch.long)
+            if query_physical_indices is not None else self.recompute_indices_by_row
+        )
+        self.query_valid_by_row = (
+            query_valid.to(device=device, dtype=torch.bool)
+            if query_valid is not None else self.recompute_valid_by_row
+        )
+        self.final_query_physical_by_row = self.query_physical_indices_by_row
+        self.final_query_valid_by_row = self.query_valid_by_row
+        self.append_physical_indices_by_row = append_physical_indices.to(
+            device=device, dtype=torch.long
+        ) if append_physical_indices is not None else None
+        self.append_valid_by_row = append_valid.to(
+            device=device, dtype=torch.bool
+        ) if append_valid is not None else None
+
+    @staticmethod
+    def _gather_rows(values: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+        """Gather sequence positions independently for every batch row."""
+        index = indices[:, None, :, None].expand(-1, values.shape[1], -1, values.shape[-1])
+        return torch.gather(values, 2, index)
+
+    @staticmethod
+    def _scatter_rows(storage: torch.Tensor, indices: torch.Tensor, valid: torch.Tensor,
+                      values: torch.Tensor) -> None:
+        """Scatter row-local KV values without allowing padded columns to write."""
+        safe_indices = torch.where(valid, indices, torch.zeros_like(indices))
+        index = safe_indices[:, None, :, None].expand(-1, storage.shape[1], -1, storage.shape[-1])
+        current = torch.gather(storage, 2, index)
+        update_mask = valid[:, None, :, None]
+        current = torch.where(update_mask, values, current)
+        storage.scatter_(2, index, current)
+
+    def update_cache(self, key_states, value_states, layer_idx, cache_kwargs=None):
+        """Write EPIC's row-local correction tokens then append decode tokens."""
+        query_width = key_states.shape[-2]
+        correction_width = self.recompute_indices_by_row.shape[1]
+        if self.recompute_label:
+            if self.execution_mode in {"cacheblend", "relaycaching"} and self._batch_cacheblend_selected:
+                active_width = self._batch_active_indices.shape[1]
+                if query_width < active_width:
+                    raise ValueError("packed CacheBlend correction input is too short")
+                # The packed sequence contains all blank tokens plus only the
+                # selected relay tokens. Persist the blank-token updates at
+                # every deep layer before scattering selected relay updates.
+                active_query = (
+                    self.query_physical_indices_by_row[:, :, None]
+                    == self._batch_active_indices[:, None, :]
+                ).any(dim=-1) & self._batch_active_valid.any(dim=1, keepdim=True)
+                blank_query_valid = self.query_valid_by_row & ~active_query
+                packed_key = key_states[..., :self.query_physical_indices_by_row.shape[1], :]
+                packed_value = value_states[..., :self.query_physical_indices_by_row.shape[1], :]
+                self._scatter_rows(
+                    self.key_cache[layer_idx], self.query_physical_indices_by_row,
+                    blank_query_valid, packed_key,
+                )
+                self._scatter_rows(
+                    self.value_cache[layer_idx], self.query_physical_indices_by_row,
+                    blank_query_valid, packed_value,
+                )
+                # Packed queries retain blank tokens in their original order.
+                # Locate each selected physical relay slot in each row's packed
+                # query layout before scattering it back to the full cache.
+                locations = self._batch_active_indices[:, :, None] == self.query_physical_indices_by_row[:, None, :]
+                query_pos = locations.to(torch.long).argmax(dim=-1)
+                corrected_key = torch.gather(
+                    key_states, 2, query_pos[:, None, :, None].expand(-1, key_states.shape[1], -1, key_states.shape[-1])
+                )
+                corrected_value = torch.gather(
+                    value_states, 2, query_pos[:, None, :, None].expand(-1, value_states.shape[1], -1, value_states.shape[-1])
+                )
+                self._scatter_rows(self.key_cache[layer_idx], self._batch_active_indices,
+                                   self._batch_active_valid, corrected_key)
+                self._scatter_rows(self.value_cache[layer_idx], self._batch_active_indices,
+                                   self._batch_active_valid, corrected_value)
+                consumed = self.query_physical_indices_by_row.shape[1]
+            else:
+                if self.execution_mode in {"cacheblend", "relaycaching"}:
+                    # CacheBlend recomputes every blank token (prefix/suffix)
+                    # at all layers. Scatter those row-local query positions
+                    # before handling the relay-specific selection path.
+                    relay_query = (self.query_physical_indices_by_row[:, :, None]
+                                   == self.relay_absolute_indices_by_row[:, None, :]).any(dim=-1)
+                    blank_query_valid = self.query_valid_by_row & ~relay_query
+                    correction_key = key_states[..., :self.query_physical_indices_by_row.shape[1], :]
+                    correction_value = value_states[..., :self.query_physical_indices_by_row.shape[1], :]
+                    self._scatter_rows(self.key_cache[layer_idx], self.query_physical_indices_by_row,
+                                       blank_query_valid, correction_key)
+                    self._scatter_rows(self.value_cache[layer_idx], self.query_physical_indices_by_row,
+                                       blank_query_valid, correction_value)
+                    locations = self.relay_absolute_indices_by_row[:, :, None] == self.query_physical_indices_by_row[:, None, :]
+                    query_pos = locations.to(torch.long).argmax(dim=-1)
+                    corrected_key = torch.gather(
+                        correction_key, 2, query_pos[:, None, :, None].expand(-1, key_states.shape[1], -1, key_states.shape[-1])
+                    )
+                    corrected_value = torch.gather(
+                        correction_value, 2, query_pos[:, None, :, None].expand(-1, value_states.shape[1], -1, value_states.shape[-1])
+                    )
+                    relay_mask = self.relay_valid_by_row
+                else:
+                    if query_width < correction_width:
+                        raise ValueError("correction input is shorter than its padded index width")
+                    corrected_key = key_states[..., :correction_width, :]
+                    corrected_value = value_states[..., :correction_width, :]
+                    relay_mask = self.recompute_valid_by_row
+                if self.execution_mode == "cacheblend" and layer_idx == self.cacheblend_select_layer:
+                    old_value = self._gather_rows(self.value_cache[layer_idx], self.relay_absolute_indices_by_row)
+                    # Selection is strictly row-local: aggregate head dimensions only.
+                    # Selection is rank-sensitive. Keep KV storage in BF16 but
+                    # reduce deviations in FP32 to avoid avoidable top-k flips.
+                    score = torch.norm(
+                        corrected_value.float() - old_value.float(), p=2, dim=-1
+                    ).mean(dim=1)
+                    score = score.masked_fill(~self.relay_valid_by_row, float("-inf"))
+                    counts = self.relay_valid_by_row.sum(dim=1)
+                    keep = torch.clamp((counts.float() * self.cacheblend_diff_por).long(), min=1)
+                    keep = torch.minimum(keep, counts)
+                    maximum = int(keep.max().item())
+                    ranked = score.argsort(dim=1, descending=True)[:, :maximum]
+                    selected_valid = torch.arange(maximum, device=self.device)[None, :] < keep[:, None]
+                    self._batch_active_indices = torch.gather(self.relay_absolute_indices_by_row, 1, ranked)
+                    # The serial implementation sorts top-k inner indices
+                    # before passing them to later layers; preserve that
+                    # causal/query order independently for every row.
+                    sentinel = torch.full_like(self._batch_active_indices, self.key_cache[0].shape[-2])
+                    self._batch_active_indices = torch.where(selected_valid, self._batch_active_indices, sentinel)
+                    self._batch_active_indices, _ = torch.sort(self._batch_active_indices, dim=1)
+                    if os.environ.get("CACHEBLEND_TRACE"):
+                        logger.info(
+                            "CACHEBLEND_BATCH layer={} selected_physical={} selected_count={}",
+                            layer_idx, self._batch_active_indices.tolist(), keep.tolist(),
+                        )
+                        print(
+                            f"CACHEBLEND_BATCH layer={layer_idx} "
+                            f"selected_physical={self._batch_active_indices.tolist()} count={keep.tolist()}",
+                            flush=True,
+                        )
+                    self._batch_active_valid = self._batch_active_indices < self.key_cache[0].shape[-2]
+                    self.recompute_num = keep
+                    self._batch_cacheblend_selected = True
+                    self._batch_cacheblend_prune_pending = True
+                elif self.execution_mode == "relaycaching" and layer_idx >= int(self.det_layer or 0):
+                    old_value = self._gather_rows(self.value_cache[layer_idx], self.relay_absolute_indices_by_row)
+                    cos_sim = F.cosine_similarity(corrected_value.float(), old_value.float(), dim=-1)
+                    scores = (1.0 - cos_sim).mean(dim=1)
+                    scores = scores.masked_fill(~self.relay_valid_by_row, 0.0)
+                    average = scores.sum(dim=1, keepdim=True) / self.relay_valid_by_row.sum(dim=1, keepdim=True).clamp_min(1)
+                    if self.tau_dev <= 1e-6:
+                        selected_valid = self.relay_valid_by_row
+                    else:
+                        selected_valid = (scores > average * self.tau_dev) & self.relay_valid_by_row
+                    # Preserve the legacy "near-zero deviation keeps all" rule.
+                    selected_valid |= ((1.0 - cos_sim.mean(dim=(1, 2))) < 1e-6)[:, None] & self.relay_valid_by_row
+                    self._batch_active_indices = torch.where(
+                        selected_valid, self.relay_absolute_indices_by_row,
+                        torch.full_like(self.relay_absolute_indices_by_row, self.key_cache[0].shape[-2]),
+                    )
+                    self._batch_active_indices, _ = torch.sort(self._batch_active_indices, dim=1)
+                    self._batch_active_valid = self._batch_active_indices < self.key_cache[0].shape[-2]
+                    self.recompute_num = selected_valid.sum(dim=1)
+                    self._batch_cacheblend_selected = True
+                    self._batch_cacheblend_prune_pending = True
+                destination = self.relay_absolute_indices_by_row if self.execution_mode in {"cacheblend", "relaycaching"} else self.recompute_indices_by_row
+                self._scatter_rows(self.key_cache[layer_idx], destination, relay_mask, corrected_key)
+                self._scatter_rows(self.value_cache[layer_idx], destination, relay_mask, corrected_value)
+                consumed = (
+                    self.query_physical_indices_by_row.shape[1]
+                    if self.execution_mode in {"cacheblend", "relaycaching"} else correction_width
+                )
+        else:
+            consumed = 0
+        if self.execution_mode in {"cacheblend", "relaycaching"} and self.append_physical_indices_by_row is not None:
+            # In the serial generate hook this final prompt token is passed via
+            # ``cache_position`` after all recompute queries. It belongs in its
+            # original prompt slot, not in the dynamic decode tail.
+            append_key = key_states[..., consumed:consumed + 1, :]
+            append_value = value_states[..., consumed:consumed + 1, :]
+            self._scatter_rows(
+                self.key_cache[layer_idx], self.append_physical_indices_by_row,
+                self.append_valid_by_row, append_key,
+            )
+            self._scatter_rows(
+                self.value_cache[layer_idx], self.append_physical_indices_by_row,
+                self.append_valid_by_row, append_value,
+            )
+            consumed += 1
+        new_key, new_value = key_states[..., consumed:, :], value_states[..., consumed:, :]
+        if new_key.shape[-2] == 0:
+            return
+        # Generation has a common physical append location only after runner
+        # compacts each row to the same left-padded cache width.  Refuse any
+        # other use rather than silently broadcasting a wrong write index.
+        if not bool((self.row_lengths == self.row_lengths[0]).all()):
+            raise RuntimeError("BatchedRelayCache decode append requires compacted equal-length rows")
+        super().update_cache(new_key, new_value, layer_idx, cache_kwargs)
+
+    def update_prefill(self, key_states, value_states, layer_idx, cache_kwargs=None):
+        self.update_cache(key_states, value_states, layer_idx, cache_kwargs)
+        return self.key_cache[layer_idx][..., :self._seen_tokens, :], self.value_cache[layer_idx][..., :self._seen_tokens, :]
+
+    def initial_process(self, hidden_states, causal_mask, position_embeddings, position_ids, rotary_emb_func):
+        # Batched EPIC/CacheBlend do not use RelayCaching hidden-state relay.
+        return hidden_states, causal_mask, position_embeddings, position_ids
+
+    def load_hidden_states(self, hidden_states, layer_idx, causal_mask, position_embeddings, position_ids):
+        return hidden_states, causal_mask, position_embeddings, position_ids
+
+    def save_hidden_states(self, hidden_states, layer_idx):
+        return
+
+    def pre_drop_process(self, hidden_states, causal_mask, position_embeddings, position_ids, rotary_emb_func):
+        if self.execution_mode not in {"cacheblend", "relaycaching"} or not self._batch_cacheblend_prune_pending:
+            return hidden_states, causal_mask, position_embeddings, position_ids
+        if not self._batch_cacheblend_pack_queries:
+            # Debug-safe form of CacheBlend: retain the full query layout while
+            # deep layers still update only selected relay slots. This isolates
+            # packing/causal-layout bugs from row-wise selection correctness.
+            self._batch_cacheblend_prune_pending = False
+            return hidden_states, causal_mask, position_embeddings, position_ids
+        indices, valid = self._batch_active_indices, self._batch_active_valid
+        relay_match = self.query_physical_indices_by_row[:, :, None] == self.relay_absolute_indices_by_row[:, None, :]
+        relay_query = relay_match.any(dim=-1)
+        selected_relay = (self.query_physical_indices_by_row[:, :, None] == indices[:, None, :]).any(dim=-1) & valid.any(dim=1, keepdim=True)
+        keep = self.query_valid_by_row & (~relay_query | selected_relay)
+        # Stable compact per-row pack: valid kept positions first, retaining
+        # original causal order; discarded/padded positions follow.
+        ordering = torch.arange(keep.shape[1], device=self.device)[None, :].expand_as(self.query_physical_indices_by_row)
+        ordering = torch.where(keep, ordering, ordering + keep.shape[1])
+        packed_order = ordering.argsort(dim=1)
+        packed_valid = torch.gather(keep, 1, packed_order)
+        packed_phys = torch.gather(self.query_physical_indices_by_row, 1, packed_order)
+        append_hidden = hidden_states[:, -1:, :]
+        hidden_states = torch.gather(hidden_states, 1, packed_order[:, :, None].expand(-1, -1, hidden_states.shape[-1]))
+        hidden_states = hidden_states.masked_fill(~packed_valid[:, :, None], 0)
+        hidden_states = torch.cat([hidden_states, append_hidden], dim=1)
+        self.query_physical_indices_by_row = packed_phys
+        self.query_valid_by_row = packed_valid
+        self.final_query_physical_by_row = packed_phys
+        self.final_query_valid_by_row = packed_valid
+        physical_start = self._seen_tokens - self.row_lengths
+        position_ids = (packed_phys - physical_start[:, None]).masked_fill(~packed_valid, 1)
+        append_pos = (self.append_physical_indices_by_row - physical_start[:, None]).masked_fill(
+            ~self.append_valid_by_row, 1
+        )
+        position_ids = torch.cat([position_ids, append_pos], dim=1)
+        key_width = causal_mask.shape[-1] if causal_mask is not None else self.key_cache[0].shape[-2]
+        key_positions = torch.arange(key_width, device=self.device)
+        mask = torch.full((packed_phys.shape[0], 1, packed_phys.shape[1] + 1, key_width),
+                          torch.finfo(hidden_states.dtype).min, dtype=hidden_states.dtype, device=self.device)
+        allowed = key_positions[None, None, :] <= packed_phys[:, :, None]
+        allowed &= packed_valid[:, :, None]
+        valid_keys = key_positions[None, :] >= (key_width - self.row_lengths[:, None])
+        allowed &= valid_keys[:, None, :]
+        append_allowed = key_positions[None, None, :] <= self.append_physical_indices_by_row[:, :, None]
+        append_allowed &= self.append_valid_by_row[:, :, None]
+        append_allowed &= valid_keys[:, None, :]
+        allowed = torch.cat([allowed, append_allowed], dim=1)
+        mask.masked_fill_(allowed[:, None, :, :], 0)
+        causal_mask = mask
+        position_embeddings = rotary_emb_func(hidden_states, position_ids)
+        self._batch_cacheblend_prune_pending = False
+        return hidden_states, causal_mask, position_embeddings, position_ids
+
+    def post_drop_process(self, hidden_states, causal_mask, position_embeddings, position_ids, rotary_emb_func):
+        return hidden_states, causal_mask, position_embeddings, position_ids
 
 
