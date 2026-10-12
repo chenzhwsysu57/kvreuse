@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,10 @@ import torch
 from modelscope import snapshot_download
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from kvreuse_data.schema import normalize_record  # noqa: E402
 
 SYSTEM_MESSAGE = "You're a helpful assistant."
 MODEL_IDS = {
@@ -69,6 +74,12 @@ def file_sha256(path: Path) -> str:
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Read paired input records, not generation result rows."""
+    return [normalize_record(row) for row in load_result_jsonl(path)]
+
+
+def load_result_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Read results verbatim so resume/archive/merge never rewrite IDs."""
     with path.open(encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
 
@@ -114,7 +125,7 @@ def prepare_truncation_retries(
             value.get("generation_max_new_tokens", value.get("output_tokens", 0))
             for family in ("full", "reuse") for value in row.get(family, {}).values()
         ))
-        for row in load_jsonl(archive_path)
+        for row in load_result_jsonl(archive_path)
     } if archive_path.exists() else set()
     with archive_path.open("a", encoding="utf-8") as handle:
         for row in truncated:
@@ -961,7 +972,7 @@ def main() -> int:
         if old_core != new_core:
             raise ValueError("existing run_config differs; use --overwrite or another output root")
     write_json_atomic(config_path, run_config)
-    existing = load_jsonl(predictions_path) if predictions_path.exists() else []
+    existing = load_result_jsonl(predictions_path) if predictions_path.exists() else []
     retry_task_ids: set[str] = set()
     if args.retry_truncated:
         existing, retry_task_ids = prepare_truncation_retries(predictions_path, existing)

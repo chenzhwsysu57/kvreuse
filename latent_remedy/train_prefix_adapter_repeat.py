@@ -17,23 +17,23 @@ from tqdm.auto import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from kv_semantic_attack.prefix_adapter_repeat import PrefixLatentAdapter, target_prefix_states_batch  # noqa: E402
-from kv_semantic_attack.train_universal_soft_suffix import fixed_train_records, read_records, task_family  # noqa: E402
-from kv_semantic_attack.universal_soft_suffix import (  # noqa: E402
+from latent_remedy.prefix_adapter_repeat import PrefixLatentAdapter, target_prefix_states_batch  # noqa: E402
+from latent_remedy.train_universal_soft_suffix import fixed_train_records, read_records, task_family  # noqa: E402
+from latent_remedy.universal_soft_suffix import (  # noqa: E402
     continuation_logits_batch,
     freeze_model,
     suffix_logits_batch,
 )
 from scripts import batch_eval as batch_ops  # noqa: E402
 from scripts import run_direct_reuse as base  # noqa: E402
-from kv_semantic_attack.teacher_trace_cache import cache_protocol, load_cache, save_cache
-from kv_semantic_attack.frozen_prefix_cache import FrozenPrefixCache, relocate_block_shared_rope
-from kv_semantic_attack.paired_full_context import PairedFullContext
-from kv_semantic_attack import static_adapter_states
-from kv_semantic_attack.full_teacher_forward import full_teacher_logits_batch
-from kv_semantic_attack.tensor_batch import BatchedPast
-from kv_semantic_attack.prepared_paired_tokens import PreparedPairedTokens
-from kv_semantic_attack.paired_tensor_training import backward_paired_batch, paired_loss
+from latent_remedy.teacher_trace_cache import cache_protocol, load_cache, save_cache
+from latent_remedy.frozen_prefix_cache import FrozenPrefixCache, relocate_block_shared_rope
+from latent_remedy.paired_full_context import PairedFullContext
+from latent_remedy import static_adapter_states
+from latent_remedy.full_teacher_forward import full_teacher_logits_batch
+from latent_remedy.tensor_batch import BatchedPast
+from latent_remedy.prepared_paired_tokens import PreparedPairedTokens
+from latent_remedy.paired_tensor_training import backward_paired_batch, paired_loss
 
 
 def parse_args() -> argparse.Namespace:

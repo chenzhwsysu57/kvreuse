@@ -6,8 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from kv_semantic_attack import eval_prefix_adapter_repeat as evaluation
-from kv_semantic_attack import train_prefix_adapter_repeat as training
+from latent_remedy import eval_prefix_adapter_repeat as evaluation
+from latent_remedy import train_prefix_adapter_repeat as training
 
 
 class AdapterPromptModesTests(unittest.TestCase):

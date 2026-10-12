@@ -1,8 +1,8 @@
 """Tensorized paired updates with OOM-safe, effective-batch-preserving retry."""
 import gc
 import torch
-from kv_semantic_attack.universal_soft_suffix import continuation_logits_batch
-from kv_semantic_attack.tensor_batch import PackedLogits
+from latent_remedy.universal_soft_suffix import continuation_logits_batch
+from latent_remedy.tensor_batch import PackedLogits
 
 
 def packed_mixed_loss(teacher, student, answers, kd_indices, gold_indices, temperature, audit=None):

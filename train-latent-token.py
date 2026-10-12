@@ -4,7 +4,7 @@
 Run this script from an activated ``kvreuse`` environment.  It selects synthetic
 training task families from a direct-reuse evaluation summary (lowest accuracy
 first), or uses task names supplied explicitly, then delegates optimization to
-``kv_semantic_attack/train_universal_soft_suffix.py``.
+``latent_remedy/train_universal_soft_suffix.py``.
 
 Examples
 --------
@@ -217,7 +217,7 @@ def main() -> int:
         **selection,
     }
     command = [
-        sys.executable, "-u", str(ROOT / "kv_semantic_attack/train_universal_soft_suffix.py"),
+        sys.executable, "-u", str(ROOT / "latent_remedy/train_universal_soft_suffix.py"),
         "--model", args.model, "--output", str(output),
         "--soft-tokens", str(args.soft_tokens), "--teacher-tokens", str(args.teacher_tokens),
         "--train-batch-size", str(args.train_batch_size),
@@ -260,7 +260,7 @@ def main() -> int:
         modelscope_cache = Path(os.environ.get("MODELSCOPE_CACHE", Path.home() / ".cache/modelscope"))
         model_path = modelscope_cache / f"models/Qwen--Qwen3-{args.model.upper()}" / "snapshots/master"
         evaluation_command = [
-            sys.executable, "-u", str(ROOT / "kv_semantic_attack/eval_universal_soft_suffix.py"),
+            sys.executable, "-u", str(ROOT / "latent_remedy/eval_universal_soft_suffix.py"),
             "--checkpoint", str(output / "best_latent_tokens.pt"), "--model-path",
             str(model_path),
             "--output", str(evaluation_output), "--eval-mode", effective_eval_mode,

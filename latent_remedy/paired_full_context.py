@@ -2,8 +2,8 @@
 from collections import OrderedDict
 import torch
 from scripts import run_direct_reuse as base
-from kv_semantic_attack.frozen_prefix_cache import relocate_block_shared_rope
-from kv_semantic_attack.tensor_batch import BatchedPast, project_spans
+from latent_remedy.frozen_prefix_cache import relocate_block_shared_rope
+from latent_remedy.tensor_batch import BatchedPast, project_spans
 
 
 class PairedFullContext:

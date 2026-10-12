@@ -1,6 +1,6 @@
 import unittest
 import torch
-from kv_semantic_attack.static_adapter_states import to_host, load_batch
+from latent_remedy.static_adapter_states import to_host, load_batch
 
 
 class StaticStatesTests(unittest.TestCase):

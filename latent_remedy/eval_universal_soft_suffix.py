@@ -28,10 +28,10 @@ sys.path.insert(0, str(ROOT))
 
 from scripts import run_direct_reuse as base  # noqa: E402
 from scripts import batch_eval as batch_ops  # noqa: E402
-from kv_semantic_attack.train_universal_soft_suffix import (  # noqa: E402
+from latent_remedy.train_universal_soft_suffix import (  # noqa: E402
     read_records,
 )
-from kv_semantic_attack.universal_soft_suffix import (  # noqa: E402
+from latent_remedy.universal_soft_suffix import (  # noqa: E402
     append_soft_suffix_batch,
     freeze_model,
 )
@@ -323,7 +323,7 @@ def main() -> int:
     if rank == 0:
         merged = []
         for other_rank in range(world_size):
-            merged.extend(base.load_jsonl(args.output / f"rank_{other_rank:02d}.jsonl"))
+            merged.extend(base.load_result_jsonl(args.output / f"rank_{other_rank:02d}.jsonl"))
         expected = {(record["task_id"], side) for record, side in all_rows}
         actual = {(row["task_id"], row["target"]) for row in merged}
         if actual != expected or len(merged) != len(actual):

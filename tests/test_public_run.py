@@ -23,6 +23,12 @@ SPEC.loader.exec_module(run)
 
 
 class PublicRunTests(unittest.TestCase):
+    def record(self, task_id: str):
+        return {"task_id": task_id, "dataset": "custom", "prefix_a": "Role A",
+                "prefix_b": "Role B", "shared_block": "[A] first\n[B] second",
+                "question": "Choose one.", "gold_a": "A", "gold_b": "B",
+                "metric": "exact_match"}
+
     def parse(self, *selection: str, reasoning: str = "no", **environment: str):
         argv = ["run.py", *selection, "--method", "reuse", "--reasoning", reasoning,
                 "--kv-mode", "a2b"]
@@ -59,7 +65,7 @@ class PublicRunTests(unittest.TestCase):
     def test_custom_input_and_limit(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "custom.jsonl"
-            rows = [{"task_id": f"custom-{index}", "dataset": "custom"} for index in range(3)]
+            rows = [self.record(f"custom-{index}") for index in range(3)]
             source.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
             args = self.parse("--input", str(source), "--input-label", "My-input", "--limit", "2")
             snapshot, selected, sources = run.select_input(args, Path(temporary) / "output")
@@ -105,7 +111,7 @@ class PublicRunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "custom.jsonl"
-            content = '{"task_id": "one", "dataset": "custom"}\n'
+            content = json.dumps(self.record("one")) + "\n"
             source.write_text(content, encoding="utf-8")
             argv = ["run.py", "--input", str(source), "--method", "reuse", "--reasoning", "yes",
                     "--kv-mode", "a2b", "--output-root", str(root / "results"), "--dry-run"]
@@ -134,7 +140,7 @@ class PublicRunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             input_path = directory / "input.jsonl"
-            input_path.write_text('{"task_id": "one"}\n', encoding="utf-8")
+            input_path.write_text(json.dumps(self.record("one")) + "\n", encoding="utf-8")
             checkpoint = directory / "checkpoint.pt"
             checkpoint.touch()
             for method in sorted(set(run.METHOD_ALIASES.values())):
@@ -148,6 +154,9 @@ class PublicRunTests(unittest.TestCase):
                         command = run.build_command(args, method, input_path, directory, sides, directions)
                         self.assertFalse(any("thinking" in flag for flag in command))
                         if method == "universal-soft-suffix":
+                            self.assertEqual(command[2],
+                                             str(ROOT / "latent_remedy/eval_universal_soft_suffix.py"))
+                            self.assertTrue(Path(command[2]).is_file())
                             self.assertEqual(command[command.index("--eval-mode") + 1],
                                              "reasoning" if reasoning == "yes" else "no-reasoning")
                         else:
@@ -156,10 +165,10 @@ class PublicRunTests(unittest.TestCase):
 
     def test_prompt_builders_keep_thinking_disabled(self):
         # Inspect real prompt calls without importing GPU-dependent modules.
-        paths = ["scripts/batch_eval.py", "kv_semantic_attack/train_universal_soft_suffix.py",
-                 "kv_semantic_attack/eval_universal_soft_suffix.py",
-                 "kv_semantic_attack/train_prefix_adapter_repeat.py",
-                 "kv_semantic_attack/eval_prefix_adapter_repeat.py"]
+        paths = ["scripts/batch_eval.py", "latent_remedy/train_universal_soft_suffix.py",
+                 "latent_remedy/eval_universal_soft_suffix.py",
+                 "latent_remedy/train_prefix_adapter_repeat.py",
+                 "latent_remedy/eval_prefix_adapter_repeat.py"]
         for relative in paths:
             tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
             calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
@@ -174,14 +183,17 @@ class PublicRunTests(unittest.TestCase):
 
 
     def test_package_import_and_wrapper_delegation(self):
-        spec = importlib.util.spec_from_file_location("public_package", ROOT / "kv_semantic_attack/__init__.py")
+        spec = importlib.util.spec_from_file_location("latent_remedy", ROOT / "latent_remedy/__init__.py")
         assert spec is not None and spec.loader is not None
         package = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(package)
+        self.assertEqual(package.__name__, "latent_remedy")
+        self.assertEqual(Path(package.__file__).resolve(), ROOT / "latent_remedy/__init__.py")
+        self.assertEqual(list(package.__path__), [str(ROOT / "latent_remedy")])
         tree = ast.parse((ROOT / "train_prefix_adapter_repeat.py").read_text(encoding="utf-8"))
         imports = [node for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
         self.assertEqual(len(imports), 1)
-        self.assertEqual(imports[0].module, "kv_semantic_attack.train_prefix_adapter_repeat")
+        self.assertEqual(imports[0].module, "latent_remedy.train_prefix_adapter_repeat")
         self.assertEqual([alias.name for alias in imports[0].names], ["main"])
         self.assertFalse(any(isinstance(node, (ast.FunctionDef, ast.ClassDef)) for node in ast.walk(tree)))
 

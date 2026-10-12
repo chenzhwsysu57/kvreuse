@@ -11,16 +11,16 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm.auto import tqdm
 
 ROOT=Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT))
-from kv_semantic_attack.prefix_adapter_repeat import (  # noqa: E402
+from latent_remedy.prefix_adapter_repeat import (  # noqa: E402
   PrefixLatentAdapter,
   append_dynamic_latents_batch,
   target_prefix_states_batch,
 )
-from kv_semantic_attack.train_universal_soft_suffix import read_records  # noqa: E402
-from kv_semantic_attack.universal_soft_suffix import freeze_model  # noqa: E402
+from latent_remedy.train_universal_soft_suffix import read_records  # noqa: E402
+from latent_remedy.universal_soft_suffix import freeze_model  # noqa: E402
 from scripts import batch_eval as batch_ops  # noqa: E402
 from scripts import run_direct_reuse as base  # noqa: E402
-from kv_semantic_attack.tensor_adapter_inference import infer_batch
+from latent_remedy.tensor_adapter_inference import infer_batch
 
 
 def args() -> argparse.Namespace:

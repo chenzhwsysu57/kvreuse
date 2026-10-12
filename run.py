@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from kvreuse_data.schema import normalize_record
 
 ROOT = Path(__file__).resolve().parent
 RELAY_BATCH_RUNNER = Path(os.environ.get(
@@ -160,7 +161,7 @@ def sha256(path: Path) -> str:
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     with path.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
+        return [normalize_record(json.loads(line)) for line in handle if line.strip()]
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -295,7 +296,7 @@ def build_command(
         cache = Path(os.environ.get("MODELSCOPE_CACHE", Path.home() / ".cache/modelscope"))
         model_path = cache / f"models/Qwen--Qwen3-{args.model.upper()}/snapshots/master"
         command = [
-            str(args.kvreuse_python), "-u", str(ROOT / "kv_semantic_attack/eval_universal_soft_suffix.py"),
+            str(args.kvreuse_python), "-u", str(ROOT / "latent_remedy/eval_universal_soft_suffix.py"),
             "--checkpoint", str(args.soft_prompt_checkpoint), "--input", str(input_path),
             "--model-path", str(model_path), "--output", str(run_dir / "artifacts"),
             "--max-new-tokens", str(max_tokens), "--batch-size", str(args.batch_size),

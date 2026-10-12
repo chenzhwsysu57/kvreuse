@@ -100,7 +100,7 @@ def main() -> int:
             f"missing {manifest}; use --allow-training-examples only if intentional"
         )
     command = [
-        sys.executable, "-u", str(ROOT / "kv_semantic_attack/eval_universal_soft_suffix.py"),
+        sys.executable, "-u", str(ROOT / "latent_remedy/eval_universal_soft_suffix.py"),
         "--checkpoint", str(checkpoint), "--model-path", str(model_path),
         "--output", str(output), "--eval-mode", args.eval_mode,
         "--max-new-tokens", str(max_tokens), "--batch-size", str(args.batch_size),

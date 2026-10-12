@@ -2,7 +2,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 import torch
-from kv_semantic_attack.full_teacher_forward import full_teacher_logits_batch
+from latent_remedy.full_teacher_forward import full_teacher_logits_batch
 
 
 class FullTeacherTests(unittest.TestCase):
@@ -15,7 +15,7 @@ class FullTeacherTests(unittest.TestCase):
         prompts=[SimpleNamespace(full_ids=torch.tensor([1,2,3])),
                  SimpleNamespace(full_ids=torch.tensor([4,5]))]
         traces=[torch.tensor([6,7,8]),torch.tensor([9])]
-        with patch('kv_semantic_attack.full_teacher_forward.base.input_device',return_value=torch.device('cpu')):
+        with patch('latent_remedy.full_teacher_forward.base.input_device',return_value=torch.device('cpu')):
             values=full_teacher_logits_batch(model,prompts,traces)
         self.assertEqual(len(calls),1)
         self.assertEqual([v.flatten().tolist() for v in values],[[3.,6.,7.],[5.]])

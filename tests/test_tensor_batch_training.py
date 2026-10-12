@@ -2,14 +2,14 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 import torch
-from kv_semantic_attack.tensor_batch import project_spans, PackedLogits
-from kv_semantic_attack.prefix_adapter_repeat import PrefixLatentAdapter
-from kv_semantic_attack.paired_full_context import PairedFullContext
-from kv_semantic_attack.train_prefix_adapter_repeat import (
+from latent_remedy.tensor_batch import project_spans, PackedLogits
+from latent_remedy.prefix_adapter_repeat import PrefixLatentAdapter
+from latent_remedy.paired_full_context import PairedFullContext
+from latent_remedy.train_prefix_adapter_repeat import (
     kl, masked_answer_kd, masked_gold_first_token_ce)
-from kv_semantic_attack.universal_soft_suffix import continuation_logits_batch
-from kv_semantic_attack.paired_tensor_training import backward_paired_batch, packed_mixed_loss
-from kv_semantic_attack.prepared_paired_tokens import PreparedPairedTokens
+from latent_remedy.universal_soft_suffix import continuation_logits_batch
+from latent_remedy.paired_tensor_training import backward_paired_batch, packed_mixed_loss
+from latent_remedy.prepared_paired_tokens import PreparedPairedTokens
 from scripts import batch_eval
 
 
@@ -204,9 +204,11 @@ class TensorTrainingTests(unittest.TestCase):
         def rope(model,reference,positions):
             angle=positions.float()[None,None,:,None].expand(1,1,-1,2)/10
             return angle.cos(),angle.sin()
-        with patch('kv_semantic_attack.paired_full_context.base.input_device',return_value=torch.device('cpu')), \
-             patch('kv_semantic_attack.paired_full_context.base.extract_cache_tensors',side_effect=lambda c:c), \
-             patch('scripts.run_direct_reuse.rope_cos_sin',side_effect=rope):
+        with (
+            patch('latent_remedy.paired_full_context.base.input_device', return_value=torch.device('cpu')),
+            patch('latent_remedy.paired_full_context.base.extract_cache_tensors', side_effect=lambda c: c),
+            patch('scripts.run_direct_reuse.rope_cos_sin', side_effect=rope),
+        ):
             old,old_states,old_teacher=PairedFullContext(model,max_bytes=0).get_batch(targets,sources,traces,modes)
             decoder.calls=0;model.lm_head.calls=0
             new,states,teacher=PairedFullContext(model,max_bytes=0).get_batch(targets,sources,traces,modes,tensorized=True)
@@ -239,7 +241,7 @@ class TensorTrainingTests(unittest.TestCase):
         pasts=[[(torch.zeros(1,1,n,2),torch.zeros(1,1,n,2))] for n in (2,4)]
         suffixes=[torch.tensor([3,4]),torch.tensor([5])]
         answers=[torch.tensor([6,7,8]),torch.tensor([9])]
-        with patch('kv_semantic_attack.universal_soft_suffix.base.input_device',return_value=torch.device('cpu')), \
+        with patch('latent_remedy.universal_soft_suffix.base.input_device',return_value=torch.device('cpu')), \
              patch('scripts.batch_eval.make_batch_cache',side_effect=lambda m,p:p), \
              patch.object(embedding,'forward',wraps=embedding.forward) as embed:
             result=continuation_logits_batch(model,list(zip(pasts,suffixes,answers)),latents)

@@ -5,10 +5,10 @@ import torch
 from transformers import Qwen3Config, Qwen3ForCausalLM
 from scripts import batch_eval as batch
 from scripts import run_direct_reuse as base
-from kv_semantic_attack.prefix_adapter_repeat import (PrefixLatentAdapter,
+from latent_remedy.prefix_adapter_repeat import (PrefixLatentAdapter,
     target_prefix_states_batch,append_dynamic_latents_batch)
-from kv_semantic_attack.universal_soft_suffix import freeze_model
-from kv_semantic_attack.tensor_adapter_inference import context_batch,append_latents,decode_tensor_batch,infer_batch
+from latent_remedy.universal_soft_suffix import freeze_model
+from latent_remedy.tensor_adapter_inference import context_batch,append_latents,decode_tensor_batch,infer_batch
 
 
 class TensorInferenceTests(unittest.TestCase):
@@ -94,7 +94,7 @@ class TensorInferenceTests(unittest.TestCase):
         tokenizer=SimpleNamespace(eos_token_id=[6,8],encode=lambda *a,**kw:[4])
         layers=[(torch.zeros(3,1,4,2),torch.zeros(3,1,4,2))]
         logits=torch.nn.functional.one_hot(torch.tensor([4,5,5]),10).float()
-        with patch('kv_semantic_attack.tensor_adapter_inference.batch_ops.make_batch_cache',side_effect=lambda m,c:c):
+        with patch('latent_remedy.tensor_adapter_inference.batch_ops.make_batch_cache',side_effect=lambda m,c:c):
             tokens=decode_tensor_batch(model,tokenizer,logits,layers,[2,4,3],10,[True,False,False])
         self.assertEqual(tokens,[[4],[5,6],[5,7,8]])
         self.assertEqual(decoder.calls,2)
