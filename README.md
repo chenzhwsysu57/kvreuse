@@ -85,7 +85,7 @@ removed. Real-world `dataset` values remain `argkp`, `deal_or_no_deal`, and
 `job_interview`; synthetic names are consistently anonymous `family_001` through
 `family_240` across full/train/test.
 
-**Prompts, gold answers, record groupings and the family-level 180/60 split are
+**Prompts, gold answers, family groupings and the family-level 180/60 split are
 unchanged; JSONL bytes and runtime IDs are not preserved.** New runtime IDs cannot
 resume old outputs or reuse old ID-keyed caches. Use fresh results directories,
 regenerate teacher/state caches and direction-ID lists, and do not bypass the
