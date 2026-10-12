@@ -1,6 +1,9 @@
 # Compact-data release checks (2026-10-12)
 
 - Main: 66 CPU tests passed after package renaming and input cleanup.
+- Batch: 75 cases discovered in the main environment (71 passed, four legacy
+  cache cases skipped). All nine Relay-specific cases then passed without skips
+  in the separate Transformers 4.52.4 environment.
 - All six JSONL files were compacted from 65,099,772 to 29,784,168 bytes.
 - The migration compared prompt text, gold labels, record order and effective
   output protocols before and after cleanup: all were unchanged.
@@ -11,8 +14,9 @@
 - Runtime IDs are content-derived, consistent across duplicate corpus slices,
   and not stored in the shipped data. Source metadata and the data manifest are
   removed; original ID-keyed results/caches must not be resumed.
-- Training/evaluation help, syntax compilation, README command construction and
-  separate Relay CLI/cache tests are checked when syncing both branches.
+- Training/evaluation help and syntax compilation passed. Both README Relay
+  command paths were dry-run tested with compact inputs; serial and batching
+  flags were correctly forwarded. Data, package and README match across branches.
 
 No data hash manifest is needed or shipped. Corpus validation is structural and
 semantic; it is not a cryptographic integrity certificate. No fresh dependency
