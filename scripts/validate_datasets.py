@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from kvreuse_data.schema import validate_record
+from kvreuse_data.schema import normalize_record, validate_record
 
 
 def validate_pku_record(record: dict[str, object]) -> None:
@@ -165,10 +165,16 @@ def main() -> int:
     for path in args.paths:
         with path.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, 1):
-                record = json.loads(line)
+                if not line.strip():
+                    continue
                 try:
+                    record = json.loads(line)
                     validate_record(record)
-                    if record["dataset"] == "pku_safe_rlhf":
+                    record = normalize_record(record)
+                    # Compact records lack the source evidence needed by oracles.
+                    if "metadata" not in record:
+                        pass
+                    elif record["dataset"] == "pku_safe_rlhf":
                         validate_pku_record(record)
                     elif record["dataset"] == "harmbench_contextual":
                         validate_harmbench_record(record)

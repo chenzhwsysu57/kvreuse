@@ -88,7 +88,7 @@ def main() -> int:
                    help="prefix_offset is the KVCOMM-style prefix-anchor calibration")
     args = p.parse_args()
     records = dr.load_jsonl(args.input)
-    base_rows = {r["task_id"]: r for r in dr.load_jsonl(args.baseline)}
+    base_rows = {r["task_id"]: r for r in dr.load_result_jsonl(args.baseline)}
     records = [r for r in records if r["task_id"] in base_rows]
     if args.max_samples > 0: records = records[:args.max_samples]
     if not records: raise ValueError("no input records have matching baseline rows")
@@ -96,7 +96,7 @@ def main() -> int:
     outdir.mkdir(parents=True, exist_ok=True)
     pred_path, summary_path = outdir / "samples.jsonl", outdir / "summary.json"
     if args.overwrite: pred_path.unlink(missing_ok=True); summary_path.unlink(missing_ok=True)
-    done = {r["task_id"] for r in dr.load_jsonl(pred_path)} if pred_path.exists() else set()
+    done = {r["task_id"] for r in dr.load_result_jsonl(pred_path)} if pred_path.exists() else set()
     model_path = Path(snapshot_download(dr.MODEL_IDS[args.model], local_files_only=not args.allow_download))
     dr.validate_model_files(model_path)
     if not torch.cuda.is_available(): raise RuntimeError("CUDA is required")
@@ -136,7 +136,7 @@ def main() -> int:
                             "reuse": base_rows[rec["task_id"]].get("reuse", {})}}
         dr.append_jsonl(pred_path, row); print(f"[{idx}/{len(records)}] {rec['task_id']}", flush=True)
         del full, prefixes, calibrated; dr.sync_cuda()
-    rows = dr.load_jsonl(pred_path)
+    rows = dr.load_result_jsonl(pred_path)
     cal_values = [v for r in rows for v in r["calibration"].values()]
     full_values = [r["baseline"].get("full", {}).get(side, {}) for r in rows for side in ("a", "b")]
     reuse_values = [

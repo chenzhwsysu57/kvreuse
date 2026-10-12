@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Verify release data integrity and family-level train/test isolation (CPU only)."""
+"""Verify compact release data and family isolation without a manifest."""
 from __future__ import annotations
 
-import hashlib
 import json
 import sys
 from collections import Counter
@@ -12,29 +11,38 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from kvreuse_data.schema import validate_record
 
+EXPECTED = {
+    "benchmark/benchmark_argkp_deal_220.jsonl": (220, None),
+    "benchmark/benchmark_job_interview_110.jsonl": (110, None),
+    "benchmark/benchmark_final240_real_ood_330_20261006.jsonl": (330, None),
+    "benchmark/generated240/full_240classes_30each.jsonl": (7200, 240),
+    "benchmark/generated240/train_180classes_30each.jsonl": (5400, 180),
+    "benchmark/generated240/test_60classes_30each.jsonl": (1800, 60),
+}
+CORE = {"dataset", "prefix_a", "prefix_b", "shared_block", "question", "gold_a", "gold_b"}
+
 
 def verify() -> dict[str, int]:
     data = ROOT / "data"
-    manifest = json.loads((data / "manifest.json").read_text(encoding="utf-8"))
     rows_by_file = {}
     actual_files = {p.relative_to(data).as_posix() for p in data.rglob("*.jsonl")}
-    if actual_files != set(manifest["files"]):
+    if actual_files != set(EXPECTED):
         raise ValueError("unexpected or missing release data files")
-    for name, spec in manifest["files"].items():
+    if list(data.rglob("*manifest*.json")):
+        raise ValueError("release data must not contain manifests")
+    for name, (count, family_count) in EXPECTED.items():
         path = data / name
         raw = path.read_bytes()
-        if hashlib.sha256(raw).hexdigest() != spec["sha256"]:
-            raise ValueError(f"SHA-256 mismatch: {name}")
         rows = [json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
-        if len(rows) != spec["records"]:
+        if len(rows) != count:
             raise ValueError(f"record-count mismatch: {name}")
         for row in rows:
-            errors = validate_record(row)
-            if errors:
-                raise ValueError(f"invalid record in {name}: {errors}")
-        if "families" in spec:
+            if not CORE <= row.keys() or set(row) - CORE - {"output_protocol"}:
+                raise ValueError(f"non-minimal input fields: {name}")
+            validate_record(row)
+        if family_count is not None:
             counts = Counter(row["dataset"] for row in rows)
-            if len(counts) != spec["families"] or set(counts.values()) != {30}:
+            if len(counts) != family_count or set(counts.values()) != {30}:
                 raise ValueError(f"family-count mismatch: {name}")
         rows_by_file[name] = rows
     prefix = "benchmark/generated240/"
@@ -47,6 +55,8 @@ def verify() -> dict[str, int]:
     fingerprint = lambda rows: Counter(json.dumps(row, sort_keys=True, ensure_ascii=False) for row in rows)
     if fingerprint(full) != fingerprint(train + test):
         raise ValueError("full corpus is not exactly the train/test union")
+    if families(full) != {f"family_{index:03d}" for index in range(1, 241)}:
+        raise ValueError("synthetic family names must be compact and anonymous")
     combined = rows_by_file["benchmark/benchmark_final240_real_ood_330_20261006.jsonl"]
     source = rows_by_file["benchmark/benchmark_argkp_deal_220.jsonl"] + rows_by_file["benchmark/benchmark_job_interview_110.jsonl"]
     if fingerprint(source) != fingerprint(combined):

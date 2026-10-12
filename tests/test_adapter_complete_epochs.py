@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def scheduler():
-    tree = ast.parse((ROOT / 'kv_semantic_attack/train_prefix_adapter_repeat.py').read_text())
+    tree = ast.parse((ROOT / 'latent_remedy/train_prefix_adapter_repeat.py').read_text())
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
                     and node.name == 'complete_epoch_batches')
     namespace = {'random': random}

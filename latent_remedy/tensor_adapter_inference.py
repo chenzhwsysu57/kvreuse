@@ -2,8 +2,8 @@
 import torch
 from scripts import run_direct_reuse as base
 from scripts import batch_eval as batch_ops
-from kv_semantic_attack.paired_full_context import PairedFullContext
-from kv_semantic_attack.batched_reuse import _left_pad_suffix_cache
+from latent_remedy.paired_full_context import PairedFullContext
+from latent_remedy.batched_reuse import _left_pad_suffix_cache
 
 
 @torch.no_grad()

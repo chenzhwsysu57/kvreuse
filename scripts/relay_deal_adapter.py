@@ -9,10 +9,15 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from kvreuse_data.schema import normalize_record  # noqa: E402
 
 SYSTEM_MESSAGE = "You're a helpful assistant."
 BOXED_PREFILL = "The answer is: \\boxed{"
@@ -75,7 +80,7 @@ class RelayExample:
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
     with path.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
+        return [normalize_record(json.loads(line)) for line in handle if line.strip()]
 
 
 def iter_examples(records: Iterable[dict[str, Any]], *, directions: Iterable[str] = ("a_to_b", "b_to_a")) -> Iterable[RelayExample]:

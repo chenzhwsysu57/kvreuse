@@ -5,7 +5,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import patch
 import torch
-from kv_semantic_attack.teacher_trace_cache import cache_protocol, load_cache, save_cache
+from latent_remedy.teacher_trace_cache import cache_protocol, load_cache, save_cache
 
 
 class TeacherCacheTests(unittest.TestCase):
@@ -32,7 +32,7 @@ class TeacherCacheTests(unittest.TestCase):
                                 cache_protocol([{'prefix':'B'}],tmp,64))
 
     def test_complete_cache_skips_all_generation_and_records_hit(self):
-        from kv_semantic_attack import train_prefix_adapter_repeat as train
+        from latent_remedy import train_prefix_adapter_repeat as train
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);model=root/'model';model.mkdir();output=root/'out';output.mkdir()
             args=SimpleNamespace(model_path=model,teacher_tokens=64,teacher_trace_cache=root/'traces.json',
@@ -50,7 +50,7 @@ class TeacherCacheTests(unittest.TestCase):
             self.assertTrue(metrics['cache_hit']);self.assertEqual(metrics['generated_directions'],0)
 
     def test_partial_cache_generates_only_missing_direction(self):
-        from kv_semantic_attack import train_prefix_adapter_repeat as train
+        from latent_remedy import train_prefix_adapter_repeat as train
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);model=root/'model';model.mkdir();output=root/'out';output.mkdir()
             args=SimpleNamespace(model_path=model,teacher_tokens=64,teacher_trace_cache=root/'traces.json',

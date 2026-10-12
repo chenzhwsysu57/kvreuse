@@ -27,8 +27,9 @@ from tqdm.auto import tqdm
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from kvreuse_data.schema import normalize_record  # noqa: E402
 from scripts import run_direct_reuse as base  # noqa: E402
-from kv_semantic_attack.universal_soft_suffix import (  # noqa: E402
+from latent_remedy.universal_soft_suffix import (  # noqa: E402
     _prefill_no_grad,
     append_suffix,
     build_reused_past,
@@ -150,15 +151,13 @@ def read_records(path: Path) -> list[dict[str, Any]]:
         records = value
     else:
         records = [json.loads(line) for line in text.splitlines() if line.strip()]
-    required = {"task_id", "dataset", "prefix_a", "prefix_b", "shared_block",
-                "question", "gold_a", "gold_b"}
+    normalized = []
     for index, record in enumerate(records):
-        missing = required - record.keys()
-        if missing:
-            raise ValueError(f"{path}:{index}: missing fields {sorted(missing)}")
-        if record["gold_a"] == record["gold_b"]:
-            raise ValueError(f"{path}:{index}: identical A/B gold")
-    return records
+        try:
+            normalized.append(normalize_record(record))
+        except ValueError as error:
+            raise ValueError(f"{path}:record {index + 1}: {error}") from error
+    return normalized
 
 
 def file_sha256(path: Path) -> str:
@@ -282,7 +281,7 @@ def directions(
 
 
 def task_family(record: dict[str, Any]) -> str:
-    """Use synthetic rule types as groups; otherwise use the dataset name."""
+    """Use legacy synthetic rule types or compact per-family dataset names."""
     attack_type = record.get("attack_type")
     if not attack_type and isinstance(record.get("metadata"), dict):
         attack_type = record["metadata"].get("attack_type")

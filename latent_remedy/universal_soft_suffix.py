@@ -15,7 +15,7 @@ import torch
 import torch.nn.functional as F
 
 from scripts import run_direct_reuse as base
-from kv_semantic_attack.tensor_batch import BatchedPast, project_spans
+from latent_remedy.tensor_batch import BatchedPast, project_spans
 
 
 def continuation_logits_batch(

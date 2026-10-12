@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 import torch
-from kv_semantic_attack import train_prefix_adapter_repeat as train
+from latent_remedy import train_prefix_adapter_repeat as train
 
 
 class MixedSupervisionTests(unittest.TestCase):
