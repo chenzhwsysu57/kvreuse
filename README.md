@@ -197,3 +197,21 @@ python -m unittest discover -s tests -v
 # On batch, check the legacy-cache tests in the separate Relay environment:
 "$RELAY_PYTHON" -m unittest discover -s tests -p 'test_relay*.py' -v
 ```
+
+## Citation
+
+```bibtex
+@misc{chen2026latentremedy,
+  title={LatentRemedy: Efficient Remedy for Non-Prefix KV Cache Reuse in Multi-Agent Systems},
+  author={Zhiwei Chen and Zhongtao Rao and Waikit Xiu and Yuxiang Zhang and Shuting Cui and Jian Chen and Tianxiang Zhao},
+  year={2026},
+  howpublished={\url{https://github.com/chenzhwsysu57/kvreuse}},
+  note={arXiv identifier pending}
+}
+```
+
+## Acknowledgements
+
+The third-party baseline code in this repository is adapted from
+[RelayCaching](https://github.com/YingshengGeng/RelayCaching).
+We thank its authors for open-sourcing their codebase.
