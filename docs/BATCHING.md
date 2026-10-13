@@ -66,18 +66,18 @@ python run.py --dataset all330 --method epic --model 4b --reasoning no \
   --output-root results/batch-dry-run --dry-run
 ```
 
-For actual inference, install the separate environment from
-[requirements-relay.txt](../requirements-relay.txt), provision the Qwen3 model
+For actual inference, install [requirements-relay.txt](../requirements-relay.txt)
+then [requirements.txt](../requirements.txt) in the same environment, provision the Qwen3 model
 at the documented ModelScope cache location, and run on a CUDA GPU:
 
 ```sh
 python run.py --dataset all330 --method epic --model 4b --reasoning no \
-  --kv-mode all --relay-python .venv-relay/bin/python \
+  --kv-mode all \
   --relay-execution-path static-batched --batch-size 2 --warmup-batches 1 \
   --max-new-tokens 128 --limit 2 --output-root results/batch-epic-smoke
 
 python run.py --dataset all330 --method relaycaching --model 4b --reasoning no \
-  --kv-mode a2b --relay-python .venv-relay/bin/python --limit 2 \
+  --kv-mode a2b --limit 2 \
   --output-root results/official-relay-smoke
 ```
 
@@ -89,7 +89,7 @@ CPU tests (no GPU/model loading):
 
 ```sh
 python -m unittest discover -s tests -p 'test_relay_batch_cli.py' -v
-.venv-relay/bin/python -m unittest discover -s tests -p 'test_relay_batch_cache.py' -v
+python -m unittest discover -s tests -p 'test_relay_batch_cache.py' -v
 ```
 
 The CLI tests use CPU mocks and the real runner parser AST. Cache tests use the
