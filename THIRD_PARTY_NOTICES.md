@@ -28,6 +28,6 @@ the code license, and this repository grants no additional rights to those data.
 
 ## First-party licensing
 
-No first-party LICENSE was present in the source checkout. A license is deliberately
-not invented here. The owner must select and add a license before advertising this
-repository as permissively licensed open-source software.
+First-party project code is released under the [MIT License](LICENSE).
+This license does not override the licenses or usage restrictions of third-party
+code, datasets, or model weights.

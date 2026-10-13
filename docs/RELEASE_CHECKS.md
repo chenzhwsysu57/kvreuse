@@ -22,5 +22,5 @@ No data hash manifest is needed or shipped. Corpus validation is structural and
 semantic; it is not a cryptographic integrity certificate. No fresh dependency
 installation or full-model GPU training, inference, accuracy or TTFT experiment
 was performed. Static batching remains diagnostic, not official paper TTFT.
-CUDA wheels are host-specific. Licensing still needs owner review: first-party
-code has no chosen license, ArgKP terms need confirmation, and Deal is CC BY-NC.
+CUDA wheels are host-specific. First-party code is MIT-licensed; ArgKP terms need
+confirmation, and Deal data retains its CC BY-NC restrictions.
