@@ -3,7 +3,7 @@
 
 <h3>Efficient Remedy for Non-Prefix KV Cache Reuse<br>in Multi-Agent Systems</h3>
 
-<p>Anonymous review artifact · <a href="data/README.md">ConflictInstruct data</a></p>
+<p>Anonymous review artifact</p>
 
 </div>
 
@@ -60,7 +60,7 @@ Keep Transformers pinned to 4.52.4 for compatibility with the vendored Relay Qwe
 | `train180` | 5,400 | 180 training families |
 | `test60` | 1,800 | 60 held-out families |
 
-Each synthetic family has 30 pairs. See [data/README.md](data/README.md) for the input format and data terms. Use `--input your_data.jsonl` instead of `--dataset` for custom paired data.
+Each synthetic family has 30 pairs. All evaluation inputs are included in this anonymous artifact. Use `--input your_data.jsonl` instead of `--dataset` for custom paired data.
 
 ### 3. Run full prefill, direct reuse, or Repeat-prefix
 
