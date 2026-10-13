@@ -16,7 +16,8 @@ This repository does not relicense third-party code or datasets.
 - The vendor directory is ordinary Git-tracked source, not a submodule. No
   additional upstream checkout or unpublished submodule commit is required.
 - The upstream requirements are retained for provenance only. Use the minimal
-  [requirements-relay.txt](requirements-relay.txt) in a separate environment.
+  [requirements-relay.txt](requirements-relay.txt) as the base, then install
+  [requirements.txt](requirements.txt) in the same environment.
 
 ## Evaluation datasets
 

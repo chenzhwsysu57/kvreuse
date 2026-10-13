@@ -37,7 +37,7 @@ Just clone this repo and ask your Copilot, Codex, or Claude to install the depen
 
 For example:
 
-> Read the README and set up the main and RelayCaching environments separately. Download Qwen3-4B, then run full prefill, direct reuse, Repeat-prefix, and the RelayCaching, CacheBlend, and EPIC baselines on all330. Start with a dry run and two pairs, keep native thinking disabled, and use separate output directories. For Relay batching, switch to batch and use the static-batched execution path.
+> Read the README and set up a single conda environment named latent-remedy with Python 3.10. Install the Relay base first with pip install -r requirements-relay.txt, then our own additions with pip install -r requirements.txt; the main requirements include -r requirements-relay.txt. Download Qwen3-4B, then run full prefill, direct reuse, Repeat-prefix, and the RelayCaching, CacheBlend, and EPIC baselines on all330 in this same environment. Start with a dry run and two pairs, keep native thinking disabled, and use separate output directories. For Relay batching, switch to batch and use the static-batched execution path.
 
 Third-party code and data retain their original terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
@@ -45,13 +45,14 @@ Third-party code and data retain their original terms; see [THIRD_PARTY_NOTICES.
 
 ### 1. Install dependencies and download a model
 
-Use a CUDA-capable GPU and install a CUDA-enabled PyTorch wheel compatible with your driver. Keep the main and RelayCaching environments separate.
+Use one conda environment, `latent-remedy`, with Python 3.10 for training, evaluation, and all baselines. Install the Relay base first, then our own additions; the main requirements include `-r requirements-relay.txt`. GPU runs require a CUDA-capable GPU and a CUDA-enabled PyTorch wheel compatible with your driver.
 
 ```bash
 git clone https://github.com/chenzhwsysu57/kvreuse.git
 cd kvreuse
 conda create -n latent-remedy python=3.10 -y
 conda activate latent-remedy
+python -m pip install -r requirements-relay.txt
 python -m pip install -r requirements.txt
 
 export MODELSCOPE_CACHE=/path/to/model-cache
@@ -61,15 +62,9 @@ export MODEL_PATH=/path/to/downloaded/Qwen3-4B
 
 Set `MODEL_PATH` to the directory reported by the download script. Adapter entry points accept `--model-path`; [run.py](run.py) uses the ModelScope cache layout under `MODELSCOPE_CACHE`. Models and adapter checkpoints are not included.
 
-For RelayCaching, CacheBlend, and EPIC:
+RelayCaching, CacheBlend, and EPIC use the same environment. [run.py](run.py) defaults to `sys.executable` for Relay subprocesses; `--relay-python /path/to/python` is an optional interpreter override, not required for this setup. The required third-party source is included; no submodule setup is needed.
 
-```bash
-conda create -n latent-remedy-relay python=3.12 -y
-conda run -n latent-remedy-relay python -m pip install -r requirements-relay.txt
-export RELAY_PYTHON=/absolute/path/to/envs/latent-remedy-relay/bin/python
-```
-
-The required third-party source is included; no submodule setup is needed.
+Keep Transformers pinned to 4.52.4 for compatibility with the vendored Relay Qwen3/cache implementation.
 
 ### 2. Choose a dataset
 
@@ -85,7 +80,7 @@ Each synthetic family has 30 pairs. See [data/README.md](data/README.md) for the
 
 ### 3. Run full prefill, direct reuse, or Repeat-prefix
 
-Run these commands in the main environment:
+Run these commands in the `latent-remedy` environment:
 
 ```bash
 python run.py --dataset all330 --method full --model 4b \
@@ -138,12 +133,12 @@ For reasoning evaluation, use `--reasoning yes --max-new-tokens 4096` and a sepa
 
 ### 6. Run third-party baselines
 
-On `main`, RelayCaching runs serially. Launch through the main environment and pass the separate Relay interpreter:
+On `main`, RelayCaching runs serially. Launch in the same `latent-remedy` environment:
 
 ```bash
 python run.py --dataset all330 --method relaycaching --model 4b \
   --reasoning no --kv-mode all --batch-size 1 \
-  --relay-python "$RELAY_PYTHON" --output-root results/relay_serial
+  --output-root results/relay_serial
 ```
 
 Replace `relaycaching` with `cacheblend` or `epic` to run those baselines. KVCOMM uses `--method kvcomm --batch-size 1` and additionally requires `--baseline` pointing to the full-prefill sample outputs.
@@ -155,7 +150,7 @@ Switch to `batch` with a clean working tree:
 ```bash
 git switch batch
 python run.py --dataset all330 --method relaycaching --model 4b \
-  --reasoning no --kv-mode all --relay-python "$RELAY_PYTHON" \
+  --reasoning no --kv-mode all \
   --relay-execution-path static-batched --batch-size 2 --warmup-batches 1 \
   --output-root results/relay_batch
 ```
@@ -167,8 +162,8 @@ The batching flags are available only on `batch`; its default is still `official
 ```bash
 python scripts/verify_public_data.py
 python -m unittest discover -s tests -v
-# On batch, check the legacy-cache tests in the separate Relay environment:
-"$RELAY_PYTHON" -m unittest discover -s tests -p 'test_relay*.py' -v
+# On batch, check the legacy-cache tests in the same environment:
+python -m unittest discover -s tests -p 'test_relay*.py' -v
 ```
 
 ## Citation
