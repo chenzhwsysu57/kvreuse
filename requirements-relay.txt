@@ -1,0 +1,12 @@
+# Minimal Hugging Face / SDPA RelayCaching base for the unified environment.
+# Python 3.10 tested; pin the legacy Qwen3/cache APIs for both project and baselines.
+# Torch/CUDA wheels must match the host driver; torchvision/torchaudio are not used.
+torch==2.7.1
+transformers==4.52.4
+accelerate==1.5.2
+numpy==1.26.4
+tenacity==8.2.3
+langchain==0.1.0
+class-registry==2.1.2
+loguru==0.7.2
+tqdm==4.66.1

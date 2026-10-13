@@ -1,0 +1,23 @@
+# Runtime environments, credentials, caches and generated experiment artifacts.
+.env
+.env.*
+!.env.example
+.venv*/
+.conda/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+results/
+logs/
+checkpoints/
+models/
+*.pt
+*.pth
+*.safetensors
+*.bin
+*.log
+*.tmp
+.DS_Store

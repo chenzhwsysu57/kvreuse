@@ -1,0 +1,6 @@
+# Unified environment: install RelayCaching's compatible base, then our additions.
+# Do not upgrade Transformers: the vendored Qwen3 hijack requires its 4.52.4 API.
+-r requirements-relay.txt
+modelscope==1.40.1
+safetensors==0.8.0
+matplotlib==3.10.9
