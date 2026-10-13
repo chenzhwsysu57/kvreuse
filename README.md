@@ -3,59 +3,26 @@
 <h1>LatentRemedy</h1>
 <h3>Efficient Remedy for Non-Prefix KV Cache Reuse<br>in Multi-Agent Systems</h3>
 
-<p><em>Reuse the shared context. Restore the target task.</em></p>
-
 <p>
-  <a href="https://github.com/chenzhwsysu57/kvreuse"><img src="https://img.shields.io/badge/Code-GitHub-181717?logo=github" alt="Code"></a>
-  <a href="#method"><img src="https://img.shields.io/badge/Method-Latent%20Tokens-6366f1" alt="Task-conditioned latent tokens"></a>
-  <a href="#results"><img src="https://img.shields.io/badge/Models-Qwen3-0ea5e9" alt="Qwen3 models"></a>
-  <a href="data/README.md"><img src="https://img.shields.io/badge/Data-ConflictInstruct-10b981" alt="Evaluation data"></a>
+  Zhiwei Chen<sup>1</sup> &nbsp; Zhongtao Rao<sup>1,2</sup> &nbsp; Waikit Xiu<sup>1,3</sup><br>
+  Yuxiang Zhang<sup>1</sup> &nbsp; Shuting Cui<sup>1</sup> &nbsp; Jian Chen<sup>3</sup> &nbsp; Tianxiang Zhao<sup>1,*</sup>
 </p>
 
 <p>
-  <a href="#method">Method</a> ·
-  <a href="#results">Results</a> ·
-  <a href="#run-it-the-vibe-coding-way-recommended">Vibe-coding</a> ·
-  <a href="#run-it-the-manual-way">Manual</a>
+  <sup>1</sup>The Hong Kong University of Science and Technology (Guangzhou)<br>
+  <sup>2</sup>Microsoft &nbsp; <sup>3</sup>The University of Hong Kong<br>
+  <sup>*</sup>Corresponding author
 </p>
 
-<img src="assets/kv-reuse-teaser.png" alt="Shared-context KV reuse from an agent with one task to an agent with a conflicting task" width="960">
-
-<p><em>The same context block, different agent instructions: shared text does not imply interchangeable KV representations.</em></p>
+<p><a href="https://github.com/chenzhwsysu57/kvreuse"><strong>Code</strong></a></p>
 
 </div>
-
-Non-prefix KV reuse saves repeated prefill when agents share a context block,
-but conflicting tasks can make direct reuse unreliable. **LatentRemedy** adds a
-few target-task-conditioned latent tokens after the reused block, helping the
-target agent interpret the cached context **without recomputing the shared block**.
-
-## Method
-
-<p align="center">
-  <img src="assets/latent-remedy-framework.png" alt="LatentRemedy framework: target prefix encoding, MLP-generated latent tokens, reused KV, and full-prefill distillation" width="780">
-</p>
-
-1. **Encode the target task.** Read the last hidden state of the target prefix.
-2. **Generate a latent remedy.** An MLP maps it to a small set of latent tokens,
-   appended after the reused KV block to interact with the shared context.
-3. **Distill full-prefill predictions.** Train the adapter with the base model
-   frozen, guiding predictions toward the target task.
-
-## Results
 
 <p align="center">
   <a href="assets/accuracy-ttft.png"><img src="assets/accuracy-ttft.png" alt="Accuracy and TTFT comparisons on Task Switch, Boolean Logic, Label Mapping, and Priority Check across Qwen3 model sizes and prompt modes" width="1100"></a>
 </p>
 
-**Accuracy and TTFT on representative conflicting tasks.** The figure compares
-reuse baselines and latent-token budgets across Qwen3-1.7B, 4B, and 8B, under
-no-reasoning and explicit-reasoning prompts. LatentRemedy improves target-task
-performance while keeping TTFT close to direct reuse as shared-cache size grows.
-Click the figure to inspect the full-resolution results.
-
-The figures above are taken from the project manuscript; the commands below
-describe how to train the adapter and evaluate reuse methods.
+<p align="center"><strong>Accuracy–TTFT balance.</strong> Ours: <strong>Latent n</strong> (n latent tokens).</p>
 
 ---
 
