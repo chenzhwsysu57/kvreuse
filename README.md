@@ -18,7 +18,7 @@
   <img src="https://img.shields.io/badge/arXiv-2610.xxxxx-b31b1b" alt="arXiv 2610.xxxxx (placeholder)">
   <a href="https://github.com/chenzhwsysu57/kvreuse"><img src="https://img.shields.io/badge/GitHub-LatentRemedy-181717?logo=github" alt="GitHub LatentRemedy"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-d4b106" alt="License MIT"></a>
-  <a href="data/README.md"><img src="https://img.shields.io/badge/data-ConflictInstruct-15803d" alt="data ConflictInstruct"></a>
+  <a href="https://huggingface.co/datasets/chenzhwsysu57/ConflictInstruct"><img src="https://img.shields.io/badge/data-ConflictInstruct-15803d" alt="data ConflictInstruct"></a>
 </p>
 
 </div>
