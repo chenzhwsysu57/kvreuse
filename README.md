@@ -9,8 +9,8 @@
 </p>
 
 <p>
-  <sup>1</sup>The Hong Kong University of Science and Technology (Guangzhou)<br>
-  <sup>2</sup>Microsoft &nbsp; <sup>3</sup>The University of Hong Kong<br>
+  <sup>1</sup><img src="assets/icons/hkust-gz.png" alt="HKUST Guangzhou" width="24" height="24"> The Hong Kong University of Science and Technology (Guangzhou)<br>
+  <sup>2</sup><img src="assets/icons/microsoft.png" alt="Microsoft" width="20" height="20"> Microsoft &nbsp; <sup>3</sup><img src="assets/icons/hku.png" alt="The University of Hong Kong" width="24" height="24"> The University of Hong Kong<br>
   <sup>*</sup>Corresponding author
 </p>
 
