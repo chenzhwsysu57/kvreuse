@@ -75,7 +75,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--soft-prompt-checkpoint", type=Path)
     parser.add_argument("--kvreuse-python", type=Path, default=Path(sys.executable))
     parser.add_argument("--relay-python", type=Path,
-                        default=Path(os.environ.get("RELAY_PYTHON", ROOT / ".venv-relay/bin/python")))
+                        default=Path(os.environ.get("RELAY_PYTHON", sys.executable)),
+                        help="Python for Relay baselines (default: current interpreter)")
     parser.add_argument("--torch-runtime", type=Path,
                         default=Path(os.environ["KVREUSE_TORCH_RUNTIME"])
                         if os.environ.get("KVREUSE_TORCH_RUNTIME") else None,

@@ -128,7 +128,7 @@ class PublicRunTests(unittest.TestCase):
 
     def test_portable_runtime_defaults_and_environment_overrides(self):
         args = self.parse("--dataset", "argkp")
-        self.assertEqual(args.relay_python, ROOT / ".venv-relay/bin/python")
+        self.assertEqual(args.relay_python, Path(sys.executable))
         self.assertIsNone(args.torch_runtime)
         self.assertEqual(args.output_root, ROOT / "results/unified")
         args = self.parse("--dataset", "argkp", RELAY_PYTHON="relay-python",
