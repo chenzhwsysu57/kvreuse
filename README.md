@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1>LatentRemedy</h1>
+
 <h3>Efficient Remedy for Non-Prefix KV Cache Reuse<br>in Multi-Agent Systems</h3>
 
 <p>
@@ -15,10 +15,9 @@
 </p>
 
 <p>
-  <img src="https://img.shields.io/badge/arXiv-2610.xxxxx-b31b1b" alt="arXiv 2610.xxxxx (placeholder)">
-  <a href="https://github.com/chenzhwsysu57/kvreuse"><img src="https://img.shields.io/badge/GitHub-LatentRemedy-181717?logo=github" alt="GitHub LatentRemedy"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-d4b106" alt="License MIT"></a>
-  <a href="https://huggingface.co/datasets/chenzhwsysu57/ConflictInstruct"><img src="https://img.shields.io/badge/Hugging%20Face-ConflictInstruct-FFD21E?logo=huggingface&amp;logoColor=FFD21E" alt="Hugging Face · ConflictInstruct"></a>
+  <a href="https://arxiv.org/abs/2610.xxxxx" title="arXiv identifier placeholder"><img src="https://cdn.simpleicons.org/arxiv/B31B1B" alt="arXiv" width="20" height="20"> 2610.xxxxx</a> &nbsp; · &nbsp;
+  <a href="https://github.com/chenzhwsysu57/kvreuse"><img src="https://cdn.simpleicons.org/github/181717" alt="GitHub" width="20" height="20"> LatentRemedy</a> &nbsp; · &nbsp;
+  <a href="https://huggingface.co/datasets/chenzhwsysu57/ConflictInstruct"><img src="https://cdn.simpleicons.org/huggingface/FFD21E" alt="Hugging Face" width="20" height="20"> ConflictInstruct</a>
 </p>
 
 </div>
