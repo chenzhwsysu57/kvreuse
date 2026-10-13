@@ -14,7 +14,12 @@
   <sup>*</sup>Corresponding author
 </p>
 
-<p><a href="https://github.com/chenzhwsysu57/kvreuse"><strong>Code</strong></a></p>
+<p>
+  <img src="https://img.shields.io/badge/arXiv-2610.xxxxx-b31b1b" alt="arXiv 2610.xxxxx (placeholder)">
+  <a href="https://github.com/chenzhwsysu57/kvreuse"><img src="https://img.shields.io/badge/GitHub-LatentRemedy-181717?logo=github" alt="GitHub LatentRemedy"></a>
+  <a href="THIRD_PARTY_NOTICES.md"><img src="https://img.shields.io/badge/License-pending-d4b106" alt="License pending"></a>
+  <a href="data/README.md"><img src="https://img.shields.io/badge/data-ConflictInstruct-15803d" alt="data ConflictInstruct"></a>
+</p>
 
 </div>
 
