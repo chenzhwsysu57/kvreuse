@@ -9,8 +9,8 @@
 </p>
 
 <p>
-  <sup>1</sup><img src="assets/icons/hkust-gz.png" alt="HKUST Guangzhou" width="24" height="24"> The Hong Kong University of Science and Technology (Guangzhou)<br>
-  <sup>2</sup><img src="assets/icons/microsoft.png" alt="Microsoft" width="20" height="20"> Microsoft &nbsp; <sup>3</sup><img src="assets/icons/hku.png" alt="The University of Hong Kong" width="24" height="24"> The University of Hong Kong<br>
+  <sup>1</sup>The Hong Kong University of Science and Technology (Guangzhou)<br>
+  <sup>2</sup>Microsoft &nbsp; <sup>3</sup>The University of Hong Kong<br>
   <sup>*</sup>Corresponding author
 </p>
 
@@ -26,7 +26,7 @@
   <a href="assets/accuracy-ttft.png"><img src="assets/accuracy-ttft.png" alt="Accuracy and TTFT comparisons on Task Switch, Boolean Logic, Label Mapping, and Priority Check across Qwen3 model sizes and prompt modes" width="1100"></a>
 </p>
 
-<p align="center"><strong>Accuracy–TTFT balance.</strong> Ours: <strong>Latent n</strong> (n latent tokens).</p>
+<p align="center"><strong>Accuracy–TTFT balance.</strong> Ours: <strong>Latent n</strong>.</p>
 
 ---
 
