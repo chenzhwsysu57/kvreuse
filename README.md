@@ -15,9 +15,9 @@
 </p>
 
 <p>
-  <a href="https://arxiv.org/abs/2610.xxxxx" title="arXiv identifier placeholder"><img src="https://cdn.simpleicons.org/arxiv/B31B1B" alt="arXiv" width="20" height="20"> 2610.xxxxx</a> &nbsp; · &nbsp;
-  <a href="https://github.com/chenzhwsysu57/kvreuse"><img src="https://cdn.simpleicons.org/github/181717" alt="GitHub" width="20" height="20"> LatentRemedy</a> &nbsp; · &nbsp;
-  <a href="https://huggingface.co/datasets/chenzhwsysu57/ConflictInstruct"><img src="https://cdn.simpleicons.org/huggingface/FFD21E" alt="Hugging Face" width="20" height="20"> ConflictInstruct</a>
+  <a href="https://arxiv.org/abs/2610.xxxxx" title="arXiv identifier placeholder"><img src="assets/icons/arxiv.svg" alt="arXiv" width="20" height="20"> 2610.xxxxx</a> &nbsp; · &nbsp;
+  <a href="https://github.com/chenzhwsysu57/kvreuse"><img src="assets/icons/github.svg" alt="GitHub" width="20" height="20"> LatentRemedy</a> &nbsp; · &nbsp;
+  <a href="https://huggingface.co/datasets/chenzhwsysu57/ConflictInstruct"><img src="assets/icons/huggingface.svg" alt="Hugging Face" width="20" height="20"> ConflictInstruct</a>
 </p>
 
 </div>
