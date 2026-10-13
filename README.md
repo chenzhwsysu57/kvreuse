@@ -1,7 +1,81 @@
-# LatentRemedy
+<div align="center">
 
-Task-conditioned latent tokens for repairing cross-prefix KV cache reuse, with
-Qwen3 training, evaluation, and reuse baselines.
+<h1>LatentRemedy</h1>
+<h3>Efficient Remedy for Non-Prefix KV Cache Reuse<br>in Multi-Agent Systems</h3>
+
+<p><em>Reuse the shared context. Restore the target task.</em></p>
+
+<p>
+  <a href="https://github.com/chenzhwsysu57/kvreuse"><img src="https://img.shields.io/badge/Code-GitHub-181717?logo=github" alt="Code"></a>
+  <a href="#method"><img src="https://img.shields.io/badge/Method-Latent%20Tokens-6366f1" alt="Task-conditioned latent tokens"></a>
+  <a href="#results"><img src="https://img.shields.io/badge/Models-Qwen3-0ea5e9" alt="Qwen3 models"></a>
+  <a href="data/README.md"><img src="https://img.shields.io/badge/Data-ConflictInstruct-10b981" alt="Evaluation data"></a>
+</p>
+
+<p>
+  <a href="#method">Method</a> ·
+  <a href="#results">Results</a> ·
+  <a href="#run-it-the-vibe-coding-way-recommended">Vibe-coding</a> ·
+  <a href="#run-it-the-manual-way">Manual</a>
+</p>
+
+<img src="assets/kv-reuse-teaser.png" alt="Shared-context KV reuse from an agent with one task to an agent with a conflicting task" width="960">
+
+<p><em>The same context block, different agent instructions: shared text does not imply interchangeable KV representations.</em></p>
+
+</div>
+
+Non-prefix KV reuse saves repeated prefill when agents share a context block,
+but conflicting tasks can make direct reuse unreliable. **LatentRemedy** adds a
+few target-task-conditioned latent tokens after the reused block, helping the
+target agent interpret the cached context **without recomputing the shared block**.
+
+## Method
+
+<p align="center">
+  <img src="assets/latent-remedy-framework.png" alt="LatentRemedy framework: target prefix encoding, MLP-generated latent tokens, reused KV, and full-prefill distillation" width="780">
+</p>
+
+1. **Encode the target task.** Read the last hidden state of the target prefix.
+2. **Generate a latent remedy.** An MLP maps it to a small set of latent tokens,
+   appended after the reused KV block to interact with the shared context.
+3. **Distill full-prefill predictions.** Train the adapter with the base model
+   frozen, guiding predictions toward the target task.
+
+## Results
+
+<p align="center">
+  <a href="assets/accuracy-ttft.png"><img src="assets/accuracy-ttft.png" alt="Accuracy and TTFT comparisons on Task Switch, Boolean Logic, Label Mapping, and Priority Check across Qwen3 model sizes and prompt modes" width="1100"></a>
+</p>
+
+**Accuracy and TTFT on representative conflicting tasks.** The figure compares
+reuse baselines and latent-token budgets across Qwen3-1.7B, 4B, and 8B, under
+no-reasoning and explicit-reasoning prompts. LatentRemedy improves target-task
+performance while keeping TTFT close to direct reuse as shared-cache size grows.
+Click the figure to inspect the full-resolution results.
+
+The figures above are taken from the project manuscript; the commands below
+describe how to train the adapter and evaluate reuse methods.
+
+---
+
+## Run it the vibe-coding way (recommended)
+
+Just clone this repo and ask your Copilot, Codex, or Claude to install the
+dependencies for you and run full prefill, direct reuse, Repeat-prefix, or the
+baselines under [third_party/RelayCaching](third_party/RelayCaching/).
+
+For example:
+
+> Read the README and set up the main and RelayCaching environments separately.
+> Download Qwen3-4B, then run full prefill, direct reuse, Repeat-prefix, and the
+> RelayCaching, CacheBlend, and EPIC baselines on all330. Start with a dry run
+> and two pairs, keep native thinking disabled, and use separate output directories.
+> For Relay batching, switch to batch and use the static-batched execution path.
+
+Third-party code and data retain their original terms; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 
 ## Run it the manual way
 
@@ -151,20 +225,3 @@ python -m unittest discover -s tests -v
 # On batch, check the legacy-cache tests in the separate Relay environment:
 "$RELAY_PYTHON" -m unittest discover -s tests -p 'test_relay*.py' -v
 ```
-
-## Run it the vibe-coding way
-
-Just clone this repo and ask your Copilot, Codex, or Claude to install the
-dependencies for you and run full prefill, direct reuse, Repeat-prefix, or the
-baselines under [third_party/RelayCaching](third_party/RelayCaching/).
-
-For example:
-
-> Read the README and set up the main and RelayCaching environments separately.
-> Download Qwen3-4B, then run full prefill, direct reuse, Repeat-prefix, and the
-> RelayCaching, CacheBlend, and EPIC baselines on all330. Start with a dry run
-> and two pairs, keep native thinking disabled, and use separate output directories.
-> For Relay batching, switch to batch and use the static-batched execution path.
-
-Third-party code and data retain their original terms; see
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
