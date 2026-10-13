@@ -17,6 +17,8 @@ The supported setup uses one conda environment named `latent-remedy` with Python
 
 - Tested environment: the existing Relay environment with Python 3.10.21, PyTorch 2.7.1+cu128, Transformers 4.52.4, Accelerate 1.5.2, NumPy 1.26.4, and ModelScope 1.40.1.
 - All 66 `main` CPU tests passed in this environment.
+- All 75 `batch` CPU tests passed in this same environment, including the legacy-cache tests, with no skips.
 - Training, evaluation, and Relay entry-point `--help` checks passed in this environment.
+- Pip's requirements dry-run reported all unified dependencies satisfied; no package installation or environment modification was performed.
 
-Limits: this check reused an existing environment; it did not perform a fresh install using the documented dependency order. No GPU training, inference, accuracy, TTFT, or throughput run was performed. The 75-case `batch` suite and its legacy-cache tests were not rerun for this unified-environment check; the earlier results above remain historical evidence only. Static batching remains diagnostic, not official paper TTFT.
+Limits: this check reused an existing environment; it did not perform a fresh install using the documented dependency order. No GPU training, inference, accuracy, TTFT, or throughput run was performed. Static batching remains diagnostic, not official paper TTFT.
