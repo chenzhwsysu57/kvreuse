@@ -42,6 +42,8 @@ Third-party code and data retain their original terms; see [THIRD_PARTY_NOTICES.
 
 ## Run it the manual way
 
+> It's a bit more complicated, but this way you'll learn more about how KV caches are retrieved, modified, and reused in LLMs. If you encounter any problems, feel free to file an issue or email me directly at e-1-2-2-1-7-6-4 [at] u [dot] n-u-s [dot] e-d-u. Have fun!
+
 ### 1. Install dependencies and download a model
 
 Use one conda environment, `latent-remedy`, with Python 3.10 for training, evaluation, and all baselines. Install the Relay base first, then our own additions; the main requirements include `-r requirements-relay.txt`. GPU runs require a CUDA-capable GPU and a CUDA-enabled PyTorch wheel compatible with your driver.
