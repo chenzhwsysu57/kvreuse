@@ -147,11 +147,13 @@ The software repository's MIT license does not override source dataset rights.
 
 ```bibtex
 @misc{chen2026latentremedy,
-  title={LatentRemedy: Efficient Remedy for Non-Prefix KV Cache Reuse in Multi-Agent Systems},
+  title={LatentRemedy: Efficient Remedy For Non-Prefix KV Cache Reuse in Multi-Agent Systems},
   author={Zhiwei Chen and Zhongtao Rao and Waikit Xiu and Yuxiang Zhang and Shuting Cui and Jian Chen and Tianxiang Zhao},
   year={2026},
-  howpublished={\url{https://github.com/chenzhwsysu57/kvreuse}},
-  note={arXiv identifier pending}
+  eprint={2610.18014},
+  archivePrefix={arXiv},
+  primaryClass={cs.CL},
+  url={https://arxiv.org/abs/2610.18014}
 }
 ```
 

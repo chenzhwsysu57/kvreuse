@@ -15,7 +15,7 @@
 </p>
 
 <p>
-  <a href="https://arxiv.org/abs/2610.xxxxx" title="arXiv identifier placeholder"><img src="assets/icons/arxiv.svg" alt="arXiv" width="20" height="20"> 2610.xxxxx</a> &nbsp; · &nbsp;
+  <a href="https://arxiv.org/abs/2610.18014"><img src="assets/icons/arxiv.svg" alt="arXiv" width="20" height="20"> 2610.18014</a> &nbsp; · &nbsp;
   <a href="https://github.com/chenzhwsysu57/kvreuse"><img src="assets/icons/github.svg" alt="GitHub" width="20" height="20"> LatentRemedy</a> &nbsp; · &nbsp;
   <a href="https://huggingface.co/datasets/chenzhwsysu57/ConflictInstruct"><img src="assets/icons/huggingface.svg" alt="Hugging Face" width="20" height="20"> ConflictInstruct</a>
 </p>
@@ -169,11 +169,13 @@ python -m unittest discover -s tests -p 'test_relay*.py' -v
 
 ```bibtex
 @misc{chen2026latentremedy,
-  title={LatentRemedy: Efficient Remedy for Non-Prefix KV Cache Reuse in Multi-Agent Systems},
+  title={LatentRemedy: Efficient Remedy For Non-Prefix KV Cache Reuse in Multi-Agent Systems},
   author={Zhiwei Chen and Zhongtao Rao and Waikit Xiu and Yuxiang Zhang and Shuting Cui and Jian Chen and Tianxiang Zhao},
   year={2026},
-  howpublished={\url{https://github.com/chenzhwsysu57/kvreuse}},
-  note={arXiv identifier pending}
+  eprint={2610.18014},
+  archivePrefix={arXiv},
+  primaryClass={cs.CL},
+  url={https://arxiv.org/abs/2610.18014}
 }
 ```
 
